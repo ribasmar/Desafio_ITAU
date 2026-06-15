@@ -2,7 +2,7 @@
 
 **Projeto:** Estratégia quantitativa baseada em features qualitativas geradas por LLM sobre comunicação do Copom, integradas a modelos de previsão de volatilidade e retorno no mercado brasileiro (Itaú Asset Quant AI 2026).
 
-**Versão do documento:** 1.0 — Junho/2026
+**Versão do documento:** 1.1 — Junho/2026
 
 ---
 
@@ -11,6 +11,8 @@
 > **Nenhum dado entra em feature, universo, preço ajustado, score ou fundamento se não puder provar `available_time <= as_of`.**
 
 Esta frase é simultaneamente o critério de arquitetura, de teste e de auditoria. Toda decisão estrutural deste documento deriva dela. O projeto não é um sistema online: é um **pipeline científico auditável**, e sua propriedade arquitetural dominante não é performance, mas **correção temporal (point-in-time) e reprodutibilidade**.
+
+Há uma classe de vazamento que a regra-mãe, sozinha, não captura: o conhecimento do futuro embutido nos pesos de um modelo de linguagem treinado com dados posteriores ao documento que ele pontua. Essa violação não passa por nenhum join e não é visível ao `PointInTimeRepository`. O projeto a trata como risco de primeira ordem, com defesas próprias descritas em `scoring/` (Seção 5) e na tabela de riscos (Seção 9).
 
 ## 2. Princípios arquiteturais
 
@@ -22,7 +24,7 @@ Esta frase é simultaneamente o critério de arquitetura, de teste e de auditori
 
 **Imutabilidade como defesa.** `data/raw/` nunca é alterado após a escrita — é o que permite reconstruir todo o pipeline quando uma fonte muda de API. O cache de scoring LLM é igualmente imutável: scores nunca são recalculados silenciosamente.
 
-**Config declarativa, experimento rastreável.** Cada experimento é um arquivo YAML validado por Pydantic. Uma ablação (`features.global_layer: false`) é literalmente um diff de config, auditável no Git. O hash da config canônica (serialização ordenada via `model_dump_json()`, nunca o YAML cru) chaveia os artefatos, garantindo que configs semanticamente idênticas mapeiem para o mesmo diretório.
+**Config declarativa, experimento rastreável.** Cada experimento é um arquivo YAML validado por Pydantic. Uma ablação (`features.global_layer: false`) é literalmente um diff de config, auditável no Git. O hash da config canônica (serialização ordenada via `model_dump_json()`, nunca o YAML cru) chaveia os artefatos, garantindo que configs semanticamente idênticas mapeiem para o mesmo diretório. Essa disciplina é também a defesa contra graus de liberdade do pesquisador: a janela de treino, a forma de agregar features e a eventual normalização por regime são parâmetros fixados na config **antes** da avaliação, não ajustados depois de ver o resultado.
 
 **Notebooks consomem, não definem.** Notebooks vivem em `notebooks/exploratory/` e leem artefatos do pipeline. Nunca são fonte da verdade.
 
@@ -83,13 +85,19 @@ Notas sobre a árvore: o módulo `fundamentals/` só ganha pasta própria se der
 
 **core/** define os tipos bitemporais compartilhados, a regra de alinhamento de calendário em um único lugar (ata às 8h BRT → disponível no pregão do mesmo dia; comunicado às 18h30 → pregão seguinte; comunicados globais convertidos pelo horário real com fuso) e a config base.
 
-**contracts/** materializa os campos obrigatórios — `event_time`, `available_time`, `source`, `revision_id`, `asset_id`, `as_of`, `calendar_date` — como schemas Pydantic (registros e configs) e pandera (DataFrames). Sobre `revision_id`: vintages históricos de séries macro revisadas (IPCA, séries do BCB) só são capturáveis daqui para frente; para o passado, usa-se a base em tempo real do próprio BCB quando disponível, ou documenta-se a limitação como ameaça à validade declarada — nunca se finge que o backtest de 2015 viu o vintage de 2015.
+**contracts/** materializa os campos obrigatórios — `event_time`, `available_time`, `source`, `revision_id`, `asset_id`, `as_of`, `calendar_date` — como schemas Pydantic (registros e configs) e pandera (DataFrames). Sobre `revision_id`: vintages históricos de séries macro revisadas (IPCA, séries do BCB) só são capturáveis daqui para frente; para o passado, usa-se a base em tempo real do próprio BCB quando disponível, ou documenta-se a limitação como ameaça à validade declarada — nunca se finge que o backtest de 2015 viu o vintage de 2015. O contrato de features em `gold/` impõe ainda uma restrição de tipo: colunas consumidas pelos modelos são escalares (numéricas ou ordinais); colunas de dtype array/vetor são rejeitadas pelo schema pandera, tornando executável a regra de que embeddings entram só como escalar derivado (ver `scoring/`).
 
 **ingestion/** implementa interfaces por tipo de fonte (`MacroProvider`, `DocumentProvider`, `FundamentalsProvider`) com adapters concretos. Ingestão idempotente e retomável via tenacity, escrevendo sempre em `raw/` antes de qualquer transformação.
 
-**corpus/** transforma atas e comunicados (HTML/PDF) em texto normalizado com metadados de publicação. Corpus central: Copom desde 1998. Corpus auxiliar: Fed (primário), ECB, BoE.
+**corpus/** transforma atas e comunicados (HTML/PDF) em texto normalizado com metadados de publicação. Corpus central: Copom desde 1998. Corpus auxiliar: Fed (primário), ECB, BoE. O corpus carrega também o rótulo de **regime de comunicação** de cada documento (ver Seção 9), parâmetro disponível para recorte ou normalização nos experimentos.
 
-**scoring/** produz os scores qualitativos (postura hawkish/dovish, incerteza, mudança semântica via embeddings, diferencial Copom−Fed, surpresa frente ao Focus). O score é função pura de `(hash_do_texto, prompt_version, model_id)` e é persistido em cache imutável. Prompts são arquivos versionados em `prompts/`, nunca strings inline. Duas defesas explícitas: temperatura 0 **não garante** determinismo total em LLMs via API, então o `model_id` efetivo retornado pela resposta é gravado junto ao score para detectar drift; e, se o provedor descontinuar o modelo, o cache imutável é o que preserva a auditabilidade dos scores históricos.
+**scoring/** produz os scores qualitativos (postura hawkish/dovish, incerteza, mudança semântica via embeddings, diferencial Copom−Fed, surpresa frente ao Focus). O score é função pura de `(hash_do_texto, prompt_version, model_id)` e é persistido em cache imutável. Prompts são arquivos versionados em `prompts/`, nunca strings inline. Duas defesas explícitas contra não-determinismo e descontinuação: temperatura 0 **não garante** determinismo total em LLMs via API, então o `model_id` efetivo retornado pela resposta é gravado junto ao score para detectar drift; e, se o provedor descontinuar o modelo, o cache imutável é o que preserva a auditabilidade dos scores históricos.
+
+Três regras adicionais blindam o scoring contra o vazamento que **não** passa pelo `PointInTimeRepository` — aquele que vive nos próprios pesos do modelo de linguagem:
+
+- **Extração restrita ao texto.** Os prompts instruem explicitamente o modelo a pontuar apenas com base no documento fornecido e proíbem qualquer inferência sobre o desfecho da reunião ou sobre eventos posteriores. A formulação anti-inferência é parte versionada do prompt (`copom_v1.md`), não convenção verbal — assim, mudá-la é um diff rastreável e re-escora o corpus sob nova `prompt_version`.
+- **Cutoff de treino gravado junto ao score.** Além do `model_id` efetivo, registra-se a data de corte de treino conhecida do modelo. É o que permite, na avaliação, separar mecanicamente o período pré-cutoff (onde o score é suspeito de retrovisor) do período pós-cutoff (limpo desse efeito).
+- **Embeddings entram como escalar, nunca como vetor.** Nenhuma feature consumida por LightGBM/XGBoost é um embedding bruto. O embedding é insumo para derivar grandezas escalares — distância de cosseno entre documentos consecutivos, projeção sobre um eixo hawkish-dovish, novidade textual. Modelos de árvore particionam mal centenas de dimensões densas de baixa informação marginal por split (cada dimensão isolada raramente sustenta um corte com ganho de impureza relevante), inflando variância sem ganho preditivo. A redução a escalar é regra de contrato (Seção `contracts/`), não otimização.
 
 **marketdata/** trata o que mais contamina resultado depois de vazamento macro: retorno total de FIIs usa a **data ex** do provento (não a data de pagamento — o erro desloca o retorno em ~15 dias e cria vazamento sutil); amortizações de FIIs de papel não são dividendo e exigem ajuste de cota; o universo é point-in-time (dezenas de FIIs foram incorporados/deslistados desde 2010 — usar a lista atual da B3 introduz survivorship bias). Fonte preferencial de proventos: FNET/B3, não agregadores.
 
@@ -130,21 +138,23 @@ tests/
 
 Comando dedicado de validação: `narrativa validate --stage silver` roda os checks pandera isoladamente, fora do fluxo de experimento.
 
+**Parcimônia imposta pela amostra.** O Copom reúne cerca de oito vezes ao ano; o corpus desde 1998 dá da ordem de duas centenas de eventos. Como as features qualitativas são constantes entre reuniões (forward-fill até a decisão seguinte) e só então unidas aos dados diários, o número de linhas no `gold/` **não** reflete o número de observações *independentes* da feature LLM — esse continua sendo o número de reuniões. O walk-forward com purga e embargo trata a autocorrelação diária, mas não fabrica sinais Copom independentes. Consequência de desenho, não opcional: cada família de features qualitativas colapsa em poucas colunas (idealmente uma a duas), regularização forte (profundidade limitada, `min_child_samples`/`min_data_in_leaf` altos, `lambda` não-nulo nos boosters) é padrão e não exceção, e a ablação é lida com a ressalva de que ganhos marginais de uma camada larga frente a tão poucos eventos podem ser ruído. O risco adjacente — escolher a forma de agregar olhando o resultado — é contido pela disciplina já existente de config versionada: a agregação é fixada como diff de config antes da avaliação out-of-sample.
+
 ## 8. Roadmap de implementação
 
 O roadmap segue a lógica de risco do projeto: primeiro a fundação anti-vazamento (que não pode ser retrofitada), depois dados, depois o diferencial (scoring), e só então modelos — alinhado às Fases 1 e 2 do protocolo da estratégia.
 
 ### Sprint 0 — Fundação (1–2 semanas)
 
-Esqueleto do repositório com src-layout formal: `pyproject.toml`, instalação editável, entry point da CLI. Implementação de `core/` (tipos bitemporais, calendário B3 via exchange_calendars, regra de alinhamento de publicação), `contracts/` (schemas Pydantic + pandera com o invariante `available_time >= event_time`) e o `PointInTimeRepository` com a filtragem `as_of`. Primeiro teste hypothesis tentando violar o invariante e teste de arquitetura com import-linter. **Critério de saída:** a regra-mãe é executável e tem teste que falha quando violada. Nada de dados reais ainda.
+Esqueleto do repositório com src-layout formal: `pyproject.toml`, instalação editável, entry point da CLI. Implementação de `core/` (tipos bitemporais, calendário B3 via exchange_calendars, regra de alinhamento de publicação), `contracts/` (schemas Pydantic + pandera com o invariante `available_time >= event_time` e a rejeição de colunas vetoriais em features) e o `PointInTimeRepository` com a filtragem `as_of`. Primeiro teste hypothesis tentando violar o invariante e teste de arquitetura com import-linter. **Critério de saída:** a regra-mãe é executável e tem teste que falha quando violada. Nada de dados reais ainda.
 
 ### Sprint 1 — Ingestão e marketdata (2–3 semanas)
 
-Adapters de macro (BCB SGS: Selic, IPCA, câmbio), expectativas (Focus/Expectativas) e corpus Copom (atas e comunicados desde 1998, com `available_time` correto). Módulo `marketdata/` com preços de FIIs por subtipo (tijolo, papel-CDI, papel-IPCA), ações de construção/varejo e PETR4 como controle; proventos via FNET/B3; retorno total com data ex e tratamento de amortização; universo point-in-time. Pipeline `raw → (bronze) → silver` com validação pandera. **Critério de saída:** `narrativa ingest` e `narrativa validate` funcionais; série de retorno total de um FII reconciliada manualmente contra fonte independente.
+Adapters de macro (BCB SGS: Selic, IPCA, câmbio), expectativas (Focus/Expectativas) e corpus Copom (atas e comunicados desde 1998, com `available_time` correto e rótulo de regime de comunicação). Módulo `marketdata/` com preços de FIIs por subtipo (tijolo, papel-CDI, papel-IPCA), ações de construção/varejo e PETR4 como controle; proventos via FNET/B3; retorno total com data ex e tratamento de amortização; universo point-in-time. Pipeline `raw → (bronze) → silver` com validação pandera. **Critério de saída:** `narrativa ingest` e `narrativa validate` funcionais; série de retorno total de um FII reconciliada manualmente contra fonte independente.
 
 ### Sprint 2 — Scoring LLM (2 semanas)
 
-Cliente LLM com prompts versionados (`copom_v1.md`), execução com temperatura 0 e model string fixado, cache imutável chaveado por `(hash_texto, prompt_version, model_id)`, gravação do `model_id` efetivo. Scores de postura, incerteza e mudança semântica via embeddings para o corpus Copom completo. Primeira passada idempotente e retomável (tenacity) — o corpus desde 1998 tem custo de API relevante e a re-execução deve ser zero. **Critério de saída:** corpus Copom 100% escorado, cache validado por `test_llm_cache_key`, inspeção qualitativa de uma amostra de scores contra leitura humana.
+Cliente LLM com prompts versionados (`copom_v1.md`) contendo instrução anti-inferência (pontuar só pelo texto fornecido, sem inferir desfecho), execução com temperatura 0 e model string fixado, cache imutável chaveado por `(hash_texto, prompt_version, model_id)`, gravação do `model_id` efetivo e da data de corte de treino do modelo. Scores de postura, incerteza e mudança semântica via embeddings (sempre reduzidos a escalar) para o corpus Copom completo. Primeira passada idempotente e retomável (tenacity) — o corpus desde 1998 tem custo de API relevante e a re-execução deve ser zero. **Critério de saída:** corpus Copom 100% escorado, cache validado por `test_llm_cache_key`, inspeção qualitativa de uma amostra de scores contra leitura humana.
 
 ### Sprint 3 — Feature store e benchmarks (2 semanas)
 
@@ -152,7 +162,7 @@ Materialização dos datasets `gold/{config_hash}/` alinhados ao pregão. Implem
 
 ### Sprint 4 — Fase 1 do protocolo: volatilidade (3 semanas)
 
-LightGBM e Random Forest com as três camadas de features (macro, fundamentos, qualitativa). Ablação completa: cada camada auxiliar só permanece se superar a versão sem ela, fora da amostra, com Diebold-Mariano contra HAR-RV/GARCH. Validação priorizando janela posterior ao cutoff do LLM para neutralizar o retrovisor do conhecimento de treino. Conversão da previsão de volatilidade em dimensionamento de risco. **Critério de saída:** resposta clara e auditável à pergunta central — a feature qualitativa adiciona valor estatisticamente significativo sobre os benchmarks?
+LightGBM e Random Forest com as três camadas de features (macro, fundamentos, qualitativa). Ablação completa: cada camada auxiliar só permanece se superar a versão sem ela, fora da amostra, com Diebold-Mariano contra HAR-RV/GARCH. Validação priorizando janela posterior ao cutoff do LLM para neutralizar o retrovisor do conhecimento de treino; resultados na janela pré-cutoff são reportados como teto otimista, nunca como evidência principal. Conversão da previsão de volatilidade em dimensionamento de risco. **Critério de saída:** resposta clara e auditável à pergunta central — a feature qualitativa adiciona valor estatisticamente significativo sobre os benchmarks, medido na janela pós-cutoff?
 
 ### Sprint 5 — Fase 2 do protocolo: retorno relativo (3 semanas)
 
@@ -171,6 +181,10 @@ A ordem não é negociável nos seguintes pontos: o `PointInTimeRepository` (Spr
 | Risco | Mitigação |
 |---|---|
 | Vazamento temporal por join ad hoc | Chokepoint único (`PointInTimeRepository`) + import-linter + hypothesis |
+| Contaminação retroativa pelo cutoff do LLM (lookahead nos pesos do modelo) | Prompt anti-inferência versionado + cutoff de treino gravado junto ao score + validação priorizando janela pós-cutoff + resultado pré-cutoff tratado como teto otimista, nunca evidência principal |
+| Não-estacionariedade do regime de comunicação do Copom | Rótulo de regime no corpus; recorte a período homogêneo ou normalização do eixo hawkish-dovish **por janela expansível (point-in-time)** — nunca com estatísticas de amostra cheia, que reintroduziriam vazamento; escolha fixada na config e medida na ablação |
+| Graus de liberdade frente a poucos eventos Copom (~8/ano) | Features qualitativas agregadas a poucas colunas + regularização forte nos modelos + forma de agregação fixada por config versionada antes da avaliação |
+| Embedding bruto degradando modelos de árvore | Redução obrigatória a escalar (distância, projeção, novidade); colunas vetoriais rejeitadas pelo contrato pandera de features |
 | Revisões de séries macro | Campo `revision_id`; vintages capturados daqui para frente; limitação histórica documentada |
 | Não-determinismo do LLM apesar de temperatura 0 | Model string fixado + `model_id` gravado + cache imutável |
 | Descontinuação do modelo LLM pelo provedor | Cache imutável preserva scores históricos auditáveis |
@@ -179,3 +193,5 @@ A ordem não é negociável nos seguintes pontos: o `PointInTimeRepository` (Spr
 | Sobrescrita de datasets entre ablações | `gold/{config_hash}/` com hash canônico da config Pydantic |
 | Divergência da regra de calendário | Regra codificada uma única vez em `core/` + `test_calendar_alignment` |
 | Custo e rate limit do scoring (corpus desde 1998) | Cache imutável + ingestão idempotente e retomável |
+
+**Tensão não trivial entre dois desses riscos.** Escassez amostral e não-estacionariedade puxam em sentidos opostos. A escassez pressiona por usar o corpus inteiro desde 1998 — mais eventos, melhor cobertura de scoring, como o Sprint 2 já assume. A não-estacionariedade pressiona por restringir a um regime de comunicação homogêneo (pré-tripé, tripé com metas declinantes, autonomia a partir de 2021 são regimes distintos em que o mesmo score significa coisas diferentes), o que reduz a amostra. A decisão não é assumida no projeto: janela de treino e eventual normalização por regime são parâmetros da config Pydantic e entram na ablação, de modo que o trade-off seja medido e reportado, não estipulado a priori. Se a normalização for adotada, é sempre por janela expansível — normalizar o eixo hawkish-dovish com estatísticas de amostra cheia reintroduziria, pela porta dos fundos, exatamente o vazamento que o resto da arquitetura combate.
