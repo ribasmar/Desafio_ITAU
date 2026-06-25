@@ -6,29 +6,50 @@
 
 > Repositório reorganizado + textos do Copom coletados com timestamp de publicação + **uma ata** rodada pelo extrator LLM local devolvendo o JSON + baseline léxico calculado na mesma ata + um notebook mostrando os dois lado a lado.
 
-Isso valida a hipótese tecnicamente **antes** de investir em modelagem. Nenhuma camada 4/5 ainda — é cedo.
+Nenhuma camada 4/5 (modelo/backtest) ainda — é cedo.
 
-## Tarefas → PRs
+## Sequência e dependências
 
-Cada item é **uma branch + uma PR pequena e revisável**. Dono sugerido entre parênteses.
+As tarefas são **encadeadas**: cada etapa só começa quando a anterior fecha. Dentro de uma etapa, o que está na mesma linha roda em **paralelo**.
 
-| # | PR (branch) | Entrega | Dono | Aceite |
+```
+ETAPA 0   #1 base do repo (merge da PR) ......................... todos
+              │
+              ▼
+ETAPA 1   #2 ingest atas (Gustavo)   #6 marketdata (Rafael)   #7 identidade (Elder)
+              │                            
+              ▼                            
+ETAPA 2   #3 dataset point-in-time (Gustavo + Rafael)  ◄── precisa de #2
+              │
+              ▼
+ETAPA 3   #4 extract_tone LLM (Gustavo)     #5 baseline léxico (Elder)  ◄── ambos precisam de #3
+              │__________________________________│
+                               ▼
+ETAPA 4   #8 notebook EDA: LLM vs léxico (Elder + Gustavo)  ◄── precisa de #4 e #5
+```
+
+| # | Tarefa | Dono | Depende de | Bloqueia |
 |---|---|---|---|---|
-| 1 | `chore/reorg-estrutura` | Estrutura, README, CONTRIBUTING, templates (esta base) | Elder + Gustavo | `pip install -e .` funciona; árvore de pastas no lugar |
-| 2 | `feat/ingest-copom` | Coletor de atas + comunicados via [API/dataset do BCB](https://dadosabertos.bcb.gov.br/dataset/atas-comunicados-copom); salva em `data/raw/` com manifesto (`url`, `data_publicacao`, `data_reuniao`, `tipo`) | Gustavo | ≥ 20 atas baixadas; manifesto com data de **publicação** real |
-| 3 | `feat/pit-dataset` | Parse do HTML/PDF → texto limpo; carimba `available_time` (publicação) → `data/processed/` | Gustavo + Rafael | 1 documento parseado e inspecionado manualmente |
-| 4 | `feat/extract-tone-poc` | `prompts/copom_v1.md` + `extract_tone()` rodando **1 ata** num LLM local (Ollama, ex. `llama3.1`/`qwen2.5`); roda 3× e mostra estabilidade do score | Gustavo + Rafael | JSON válido conforme schema; scores estáveis entre execuções |
-| 5 | `feat/lexico-baseline` | Lista PT hawkish/dovish + índice por contagem; score na mesma ata da #4 | Rafael (+ validação estatística quando entrar) | número de tom léxico para a ata, comparável ao LLM |
-| 6 | `feat/marketdata-selic-focus` | Selic e mediana do Focus via [BCB SGS / Expectativas](https://dadosabertos.bcb.gov.br/dataset); estrutura para DI 1Y (fonte a definir) | Rafael | série puxada e salva; surpresa da decisão calculável para 1 reunião |
-| 7 | `docs/identidade-robo` | Brainstorm de nome + identidade do robô (critério 5%) — coerente com a tese (tom/DI) | Elder | 3 propostas de nome + 1 parágrafo de identidade |
-| 8 | `docs/eda-notebook` | Notebook lendo a 1ª ata: texto + score LLM + score léxico lado a lado | Elder + Gustavo | notebook roda do zero e renderiza a comparação |
+| 1 | Base do repo (esta PR) | Elder + Gustavo | — | tudo |
+| 2 | Ingest atas/comunicados (API BCB) | **Gustavo** | #1 | #3 |
+| 3 | Dataset point-in-time (parse + timestamp) | **Gustavo + Rafael** | #2 | #4, #5 |
+| 4 | `extract_tone()` em LLM local (1 ata) | **Gustavo** | #3 | #8 |
+| 5 | Baseline léxico hawkish/dovish *(back do Elder)* | **Elder** (+ Rafael/validação estatística) | #3 | #8 |
+| 6 | Selic + Focus → surpresa da decisão | **Rafael** | #1 | (Sprint 1) |
+| 7 | Identidade/nome do robô (critério 5%) | **Elder** | #1 | — |
+| 8 | Notebook EDA: LLM vs léxico | **Elder + Gustavo** | #4, #5 | — |
 
-## Ordem e dependências
+## Carga por pessoa (todos codam back)
 
-- #1 primeiro (todos dependem da estrutura).
-- #2 → #3 → #4/#5 em sequência (precisam do texto coletado e carimbado).
-- #6 e #7 são **paralelos** (não dependem das outras) — bons para destravar trabalho desde o dia 1.
-- #8 fecha o sprint juntando #4 e #5.
+- **Gustavo** — espinha do pipeline: #2 → #3 → #4 (e ajuda no #8). É o caminho crítico.
+- **Rafael** — #6 (dados de mercado, paralelo) + co-dono do #3. Coordena a entrada da validação estatística.
+- **Elder** — #7 (leve, na Etapa 1) **e #5 (back de verdade: módulo Python do léxico)** na Etapa 3, fechando com o #8. Começa o léxico contra uma ata de exemplo enquanto a espinha #2→#3 anda, e conecta ao `data/processed/` quando o #3 fica pronto.
+
+## Caminho crítico e folga
+
+- **Crítico:** #1 → #2 → #3 → #4 → #8. Se isso atrasar, a fatia vertical não fecha.
+- **Folga (paralelo, começam já na Etapa 1):** #6 e #7 não dependem da espinha — destravar no dia 1 para ninguém ficar ocioso esperando.
+- **Risco do #5:** o módulo do léxico (lógica de contagem + lista de termos) pode ser prototipado **antes** de #3 ficar pronto, usando uma ata colada à mão; só a ligação ao dataset processado espera o #3.
 
 ## O que NÃO fazer ainda
 
@@ -38,4 +59,4 @@ Modelo preditivo, walk-forward, backtest, P&L, estratégia. Isso é Sprint 1+, d
 
 1. Repo reorganizado e cada um com ≥ 1 PR mergeado.
 2. A fatia vertical rodando (notebook #8).
-3. Lista honesta de bloqueios encontrados (ex.: achar fonte boa de DI 1Y, custo/latência do modelo local).
+3. Lista honesta de bloqueios (ex.: fonte de DI 1Y, custo/latência do modelo local).
