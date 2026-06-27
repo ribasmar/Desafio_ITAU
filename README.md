@@ -1,5 +1,7 @@
 # CopomLens — Uma lente sobre o que o Banco Central realmente está dizendo
 
+![CopomLens](docs/assets/copom_lens_logo.svg)
+
 > Estratégia quantitativa que mede o **tom da comunicação do Copom relativo ao que já está precificado**, e testa se esse tom — extraído por LLM — carrega informação **incremental** sobre a reação do **DI de 1 ano**.
 >
 > Desafio Quant AI · Itaú Asset Management 2026 · **Status: validação (v0.1)**
