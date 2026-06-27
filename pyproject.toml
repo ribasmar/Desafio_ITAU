@@ -1,0 +1,23 @@
+[project]
+name = "copom-quant-ai"
+version = "0.1.0"
+description = "Estratégia quantitativa baseada no tom da comunicação do Copom (DI 1Y)."
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scikit-learn>=1.3",
+    "statsmodels>=0.14",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "jupyter>=1.0",
+    # Extração LLM local: cliente Ollama. Alternativa: transformers + torch.
+    "ollama>=0.3",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
