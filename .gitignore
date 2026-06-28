@@ -23,6 +23,3 @@ data/processed/*
 # Artefatos de execução
 runs/
 *.log
-
-# Aprendizado 
-learn
