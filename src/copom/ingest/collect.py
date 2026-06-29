@@ -4,230 +4,230 @@ from pathlib import Path
 
 import httpx
 
-urlBase = "https://www.bcb.gov.br/api/servico/sitebcb/copom"
-caminhoRaw = Path("data/raw")
-arquivoManifesto = "manifest.json"
-usuarioAgente = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'"
+BASE_URL = "https://www.bcb.gov.br/api/servico/sitebcb/copom"
+RAW_DIR = Path("data/raw")
+MANIFEST_FILENAME = "manifest.json"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-registrador = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
-def _cliente() -> httpx.Client:
+def _client() -> httpx.Client:
     return httpx.Client(
-        base_url=urlBase,
-        headers={"User-Agent": usuarioAgente},
+        base_url=BASE_URL,
+        headers={"User-Agent": USER_AGENT},
         timeout=30.0,
     )
 
 
-def _carregarManifesto(caminhoBase: Path) -> list[dict]:
-    caminho = caminhoBase / arquivoManifesto
-    if caminho.exists():
-        with open(caminho, "r", encoding="utf-8") as arquivo:
-            return json.load(arquivo)
+def _load_manifest(base_path: Path) -> list[dict]:
+    path = base_path / MANIFEST_FILENAME
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     return []
 
 
-def _escreverManifesto(caminhoBase: Path, manifesto: list[dict]) -> None:
-    caminho = caminhoBase / arquivoManifesto
-    with open(caminho, "w", encoding="utf-8") as arquivo:
-        json.dump(manifesto, arquivo, ensure_ascii=False, indent=2)
+def _write_manifest(base_path: Path, manifest: list[dict]) -> None:
+    path = base_path / MANIFEST_FILENAME
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
 
 
 # ── API calls ──────────────────────────────────────────────────────────
 
 
-def buscarListaAtas(quantidade: int = 30) -> list[dict]:
-    with _cliente() as cliente:
-        resposta = cliente.get(f"/atas?quantidade={quantidade}")
-        resposta.raise_for_status()
-        return resposta.json()["conteudo"]
+def fetch_minutes_list(count: int = 30) -> list[dict]:
+    with _client() as client:
+        response = client.get(f"/atas?quantidade={count}")
+        response.raise_for_status()
+        return response.json()["conteudo"]
 
 
-def buscarDetalheAta(numeroReuniao: int) -> dict | None:
-    with _cliente() as cliente:
-        resposta = cliente.get(f"/atas_detalhes?nro_reuniao={numeroReuniao}")
-        if resposta.status_code == 500:
-            registrador.warning("Ata %d retornou 500 (PDF-only, sem texto HTML)", numeroReuniao)
+def fetch_minute_detail(meeting_number: int) -> dict | None:
+    with _client() as client:
+        response = client.get(f"/atas_detalhes?nro_reuniao={meeting_number}")
+        if response.status_code == 500:
+            logger.warning("Ata %d retornou 500 (PDF-only, sem texto HTML)", meeting_number)
             return None
-        resposta.raise_for_status()
-        return resposta.json()["conteudo"][0]
+        response.raise_for_status()
+        return response.json()["conteudo"][0]
 
 
-def buscarListaComunicados(quantidade: int = 30) -> list[dict]:
-    with _cliente() as cliente:
-        resposta = cliente.get(f"/comunicados?quantidade={quantidade}")
-        resposta.raise_for_status()
-        return resposta.json()["conteudo"]
+def fetch_statements_list(count: int = 30) -> list[dict]:
+    with _client() as client:
+        response = client.get(f"/comunicados?quantidade={count}")
+        response.raise_for_status()
+        return response.json()["conteudo"]
 
 
-def buscarDetalheComunicado(numeroReuniao: int) -> dict | None:
-    with _cliente() as cliente:
-        resposta = cliente.get(f"/comunicados_detalhes?nro_reuniao={numeroReuniao}")
-        if resposta.status_code == 500:
-            registrador.warning("Comunicado %d retornou 500", numeroReuniao)
+def fetch_statement_detail(meeting_number: int) -> dict | None:
+    with _client() as client:
+        response = client.get(f"/comunicados_detalhes?nro_reuniao={meeting_number}")
+        if response.status_code == 500:
+            logger.warning("Comunicado %d retornou 500", meeting_number)
             return None
-        resposta.raise_for_status()
-        return resposta.json()["conteudo"][0]
+        response.raise_for_status()
+        return response.json()["conteudo"][0]
 
 
 # ── Save helpers ───────────────────────────────────────────────────────
 
 
-def _salvarArquivoRaw(
-    caminhoBase: Path,
-    nomeArquivo: str,
-    conteudo: str,
+def _save_raw_file(
+    base_path: Path,
+    filename: str,
+    content: str,
 ) -> bool:
-    caminhoArquivo = caminhoBase / nomeArquivo
-    if caminhoArquivo.exists():
-        registrador.info("  → j\u00e1 existe: %s (pulando)", nomeArquivo)
+    file_path = base_path / filename
+    if file_path.exists():
+        logger.info("  → já existe: %s (pulando)", filename)
         return False
-    caminhoArquivo.write_text(conteudo, encoding="utf-8")
-    registrador.info("  → salvo: %s (%d bytes)", nomeArquivo, len(conteudo))
+    file_path.write_text(content, encoding="utf-8")
+    logger.info("  → salvo: %s (%d bytes)", filename, len(content))
     return True
 
 
-def _construirEntradaManifesto(
-    tipo: str,
-    numeroReuniao: int,
-    dataReuniao: str,
-    dataPublicacao: str,
-    nomeArquivo: str,
+def _build_manifest_entry(
+    doc_type: str,
+    meeting_number: int,
+    meeting_date: str,
+    publication_date: str,
+    filename: str,
 ) -> dict:
-    endpointDetalhe = "atas_detalhes" if tipo == "ata" else "comunicados_detalhes"
+    detail_endpoint = "atas_detalhes" if doc_type == "ata" else "comunicados_detalhes"
     return {
-        "url": f"{urlBase}/{endpointDetalhe}?nro_reuniao={numeroReuniao}",
-        "data_publicacao": dataPublicacao,
-        "data_reuniao": dataReuniao,
-        "tipo": tipo,
-        "numero_reuniao": numeroReuniao,
-        "filename": nomeArquivo,
+        "url": f"{BASE_URL}/{detail_endpoint}?nro_reuniao={meeting_number}",
+        "data_publicacao": publication_date,
+        "data_reuniao": meeting_date,
+        "tipo": doc_type,
+        "numero_reuniao": meeting_number,
+        "filename": filename,
     }
 
 
 # ── Collectors ─────────────────────────────────────────────────────────
 
 
-def coletarAtas(quantidade: int = 20, caminhoBase: Path = caminhoRaw) -> int:
-    base = Path(caminhoBase)
+def collect_minutes(count: int = 20, base_path: Path = RAW_DIR) -> int:
+    base = Path(base_path)
     base.mkdir(parents=True, exist_ok=True)
-    manifesto = _carregarManifesto(base)
-    numerosExistentes: set[int] = {
-        e["numero_reuniao"] for e in manifesto if e["tipo"] == "ata"
+    manifest = _load_manifest(base)
+    existing_ids: set[int] = {
+        e["numero_reuniao"] for e in manifest if e["tipo"] == "ata"
     }
-    listaAtas = buscarListaAtas(quantidade)
-    novasEntradas: list[dict] = []
-    for ata in listaAtas:
-        numero = ata["nroReuniao"]
-        if numero in numerosExistentes:
-            registrador.info("Ata %d j\u00e1 registrada no manifesto, pulando", numero)
+    minutes_list = fetch_minutes_list(count)
+    new_entries: list[dict] = []
+    for minute in minutes_list:
+        num = minute["nroReuniao"]
+        if num in existing_ids:
+            logger.info("Ata %d já registrada no manifesto, pulando", num)
             continue
-        detalhe = buscarDetalheAta(numero)
-        if detalhe is None:
+        detail = fetch_minute_detail(num)
+        if detail is None:
             continue
-        dataReuniao = detalhe["dataReferencia"]
-        dataPublicacao = detalhe["dataPublicacao"]
-        nomeArquivo = f"ata_{numero}_{dataReuniao}.txt"
-        texto = detalhe["textoAta"]
-        salvo = _salvarArquivoRaw(base, nomeArquivo, texto)
-        if not salvo:
+        meeting_date = detail["dataReferencia"]
+        publication_date = detail["dataPublicacao"]
+        filename = f"ata_{num}_{meeting_date}.txt"
+        text = detail["textoAta"]
+        saved = _save_raw_file(base, filename, text)
+        if not saved:
             continue
-        entrada = _construirEntradaManifesto(
-            tipo="ata",
-            numeroReuniao=numero,
-            dataReuniao=dataReuniao,
-            dataPublicacao=dataPublicacao,
-            nomeArquivo=nomeArquivo,
+        entry = _build_manifest_entry(
+            doc_type="ata",
+            meeting_number=num,
+            meeting_date=meeting_date,
+            publication_date=publication_date,
+            filename=filename,
         )
-        novasEntradas.append(entrada)
-    if novasEntradas:
-        manifesto.extend(novasEntradas)
-        _escreverManifesto(base, manifesto)
-    return len(novasEntradas)
+        new_entries.append(entry)
+    if new_entries:
+        manifest.extend(new_entries)
+        _write_manifest(base, manifest)
+    return len(new_entries)
 
 
-def coletarComunicados(quantidade: int = 20, caminhoBase: Path = caminhoRaw) -> int:
-    base = Path(caminhoBase)
+def collect_statements(count: int = 20, base_path: Path = RAW_DIR) -> int:
+    base = Path(base_path)
     base.mkdir(parents=True, exist_ok=True)
-    manifesto = _carregarManifesto(base)
-    numerosExistentes: set[int] = {
-        e["numero_reuniao"] for e in manifesto if e["tipo"] == "comunicado"
+    manifest = _load_manifest(base)
+    existing_ids: set[int] = {
+        e["numero_reuniao"] for e in manifest if e["tipo"] == "comunicado"
     }
-    listaComunicados = buscarListaComunicados(quantidade)
-    novasEntradas: list[dict] = []
-    for com in listaComunicados:
-        numero = com["nro_reuniao"]
-        if numero in numerosExistentes:
-            registrador.info("Comunicado %d j\u00e1 registrado no manifesto, pulando", numero)
+    statements_list = fetch_statements_list(count)
+    new_entries: list[dict] = []
+    for stmt in statements_list:
+        num = stmt["nro_reuniao"]
+        if num in existing_ids:
+            logger.info("Comunicado %d já registrado no manifesto, pulando", num)
             continue
-        detalhe = buscarDetalheComunicado(numero)
-        if detalhe is None:
+        detail = fetch_statement_detail(num)
+        if detail is None:
             continue
-        dataReuniao = detalhe["dataReferencia"]
-        nomeArquivo = f"comunicado_{numero}_{dataReuniao}.txt"
-        texto = detalhe["textoComunicado"]
-        salvo = _salvarArquivoRaw(base, nomeArquivo, texto)
-        if not salvo:
+        meeting_date = detail["dataReferencia"]
+        filename = f"comunicado_{num}_{meeting_date}.txt"
+        text = detail["textoComunicado"]
+        saved = _save_raw_file(base, filename, text)
+        if not saved:
             continue
-        entrada = _construirEntradaManifesto(
-            tipo="comunicado",
-            numeroReuniao=numero,
-            dataReuniao=dataReuniao,
-            dataPublicacao=dataReuniao,
-            nomeArquivo=nomeArquivo,
+        entry = _build_manifest_entry(
+            doc_type="comunicado",
+            meeting_number=num,
+            meeting_date=meeting_date,
+            publication_date=detail.get("dataPublicacao", meeting_date),
+            filename=filename,
         )
-        novasEntradas.append(entrada)
-    if novasEntradas:
-        manifesto.extend(novasEntradas)
-        _escreverManifesto(base, manifesto)
-    return len(novasEntradas)
+        new_entries.append(entry)
+    if new_entries:
+        manifest.extend(new_entries)
+        _write_manifest(base, manifest)
+    return len(new_entries)
 
 
-def coletarTudo(quantidade: int = 20, caminhoBase: Path = caminhoRaw) -> dict[str, int]:
+def collect_all(count: int = 20, base_path: Path = RAW_DIR) -> dict[str, int]:
     return {
-        "atas": coletarAtas(quantidade, caminhoBase),
-        "comunicados": coletarComunicados(quantidade, caminhoBase),
+        "minutes": collect_minutes(count, base_path),
+        "statements": collect_statements(count, base_path),
     }
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
 
 
-def principal() -> None:
+def main() -> None:
     import argparse
-    analisador = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Coleta atas e comunicados do Copom via API do BCB e salva em data/raw/ com manifesto.",
     )
-    analisador.add_argument(
+    parser.add_argument(
         "--last",
         type=int,
         default=20,
-        help="Quantidade de atas/comunicados a baixar (padr\u00e3o: 20)",
+        help="Quantidade de atas/comunicados a baixar (padrão: 20)",
     )
-    analisador.add_argument(
+    parser.add_argument(
         "--path",
         type=str,
-        default=str(caminhoRaw),
-        help="Diret\u00f3rio de destino (padr\u00e3o: data/raw/)",
+        default=str(RAW_DIR),
+        help="Diretório de destino (padrão: data/raw/)",
     )
-    argumentos = analisador.parse_args()
-    caminho = Path(argumentos.path)
-    registrador.info("Coletando \u00faltimas %d atas e comunicados do Copom...", argumentos.last)
-    resultado = coletarTudo(quantidade=max(argumentos.last, 5), caminhoBase=caminho)
-    manifesto = _carregarManifesto(caminho)
-    registrador.info(
-        "Resumo: %d atas novas \u00b7 %d comunicados novos \u00b7 total no manifesto: %d documentos",
-        resultado["atas"],
-        resultado["comunicados"],
-        len(manifesto),
+    args = parser.parse_args()
+    path = Path(args.path)
+    logger.info("Coletando últimas %d atas e comunicados do Copom...", args.last)
+    result = collect_all(count=max(args.last, 5), base_path=path)
+    manifest = _load_manifest(path)
+    logger.info(
+        "Resumo: %d atas novas · %d comunicados novos · total no manifesto: %d documentos",
+        result["minutes"],
+        result["statements"],
+        len(manifest),
     )
 
 
 if __name__ == "__main__":
-    principal()
+    main()
