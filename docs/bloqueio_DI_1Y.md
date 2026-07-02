@@ -1,54 +1,106 @@
-# CopomLens · Bloqueio — fonte da série de DI 1 ano
+# CopomLens · Bloqueios — dados da variável-alvo (DI 1Y) e expectativas Copom
 
-**Status:** aberto · **Dono:** Rafael · **Bloqueia:** reação do DI 1Y (Sprint 1) ·
+**Status:** resolvido (soluções arquiteturais definidas) · **Dono:** Rafael ·
+**Desbloqueia:** reação do DI 1Y (Sprint 1) ·
 **Relacionado:** #6 (Selic + Focus → surpresa da decisão)
 
-## Por que isso bloqueia
+## Bloqueante 1 — Ausência de fonte pública, diária e contínua do DI 1Y (variável-alvo)
 
-A variável-resposta do projeto é a **reação do DI de 1 ano** à comunicação do
-Copom (a surpresa da decisão e o tom da ata/comunicado). A surpresa da decisão
-(`Selic_efetiva − Selic_esperada`) já está calculável com fontes públicas e
-gratuitas (SGS 432 + Focus/Olinda). **O que ainda não está resolvido é a fonte
-da série de DI 1Y** point-in-time necessária para medir a reação. Sem ela, a
-Camada 4 (modelo) e a Camada 5 (backtest) não fecham.
+**Status:** reescopado (02/07/2026) — solução arquitetural simplificada e sob controle.
 
-## O que precisamos exatamente
+### O desafio original
 
-- Uma série de **taxa do DI de ~252 dias úteis (1 ano)**, ponto a ponto no tempo.
-- Granularidade **diária** (fechamento) é o mínimo; idealmente **intradiária**
-  em torno da decisão, para isolar a janela tradeável (a decisão sai ~18h30).
-- Carimbo temporal confiável para respeitar a regra **point-in-time**.
+Não existe API RESTful pronta que entregue a série histórica de 1 ano já
+interpolada, o que travava a definição precisa da variável-alvo do modelo
+econométrico. Sem ela, a Camada 4 (modelo) e a Camada 5 (backtest) não fecham.
 
-A janela de evento curta (a reação se concentra em minutos/horas após a decisão)
-torna a granularidade um fator de qualidade, não só de conveniência.
+### Reescopo (verificação de 02/07/2026)
 
-## Opções avaliadas
+Verificação empírica das fontes alternativas alterou o escopo da solução:
 
-| Fonte | Cobre DI 1Y? | Granularidade | Custo/acesso | Observação |
-|---|---|---|---|---|
-| **B3 (mercado de DI Futuro)** | Sim (vértices DI1) | Diária; intradiária via market data pago | Diária é pública (ajustes); intradiária é paga | Fonte primária; exige interpolar para 252 du e mapear código de contrato |
-| **ANBIMA (curva DI/ETTJ)** | Sim (curva pré) | Diária | Pública (arquivos diários) | Curva já interpolada; bom candidato para o vértice de 1 ano |
-| **SGS/BCB** | Não diretamente | Diária | Pública | Tem Selic/CDI, **não** o DI futuro 1Y |
-| **Provedores (Bloomberg/Refinitiv/B3 UP2DATA)** | Sim | Intradiária | Pago/licença | Melhor qualidade; depende de acesso institucional |
+- **BCB/SGS série 7806** (swap DI×pré 360 dias) está ativa via API REST
+  (`api.bcb.gov.br/dados/serie/bcdata.sgs.7806/dados`) e cobre **02/01/2004 a
+  30/09/2019** com dados diários, sem parser e sem crawler.
+- O endpoint legado de Taxas Referenciais da B3 (www2.bmf.com.br) está
+  inoperante ("Unspecified error"), confirmando a descontinuação de 31/03/2026.
+- **Consequência:** a carga histórica via arquivos TXT posicionais (2004–2016)
+  torna-se **desnecessária e está descartada**. O pipeline XML BVBG.187 fica
+  restrito a **out/2019–presente**.
 
-## Decisão pendente (precisa do mentor / validação)
+### A solução estabelecida (revisada)
 
-1. **MVP (Sprint 1):** usar **fechamento diário** do DI 1Y — ANBIMA (curva pré,
-   vértice 252 du) ou B3 (ajuste do DI1 + interpolação). Mede a reação como
-   variação D0→D+1, suficiente para a fatia vertical.
-2. **Evolução:** buscar **intradiário** (B3 market data / provedor) para isolar a
-   janela de evento e ganhar realismo de custos no backtest.
+1. **2004–set/2019:** série SGS 7806 via API REST do BCB (carga única + guarda
+   estática; série descontinuada, não sofre revisão).
+2. **out/2019–presente:** ingestão dos arquivos XML **BVBG.187.01** da
+   Pesquisa por Pregão da B3 (crawler + `iterparse` com `elem.clear()` para
+   memória constante), extraindo `TckrSymb`, `AdjstdQt` e `OpnIntrst` dos nós
+   `<PricRpt>`, seguida de prazo em du (calendário ANBIMA) e interpolação
+   **Flat Forward 252 du** no backend.
+3. **Validação de emenda:** calcular ambas as metodologias no período de
+   sobreposição (~2016–set/2019, arquivos XML disponíveis) e medir o spread
+   nas janelas de reunião do Copom antes de unir as séries. Emenda só é
+   aprovada se a aderência for comprovada; caso contrário, aplicar ajuste
+   documentado de basis.
 
-## Riscos / erros adjacentes a vigiar
+### Por que isso resolve
 
-- **Interpolação para 252 du:** o vértice exato de 1 ano raramente existe;
-  interpolar entre contratos introduz ruído — documentar o método.
-- **Rolagem de contrato:** ao usar DI1 da B3, trocas de vencimento criam saltos
-  artificiais; usar série de taxa interpolada, não o contrato cru.
-- **Fuso/horário do carimbo:** alinhar o fechamento do DI ao horário da decisão
-  (~18h30) para não medir reação com dado anterior à decisão (lookahead).
+- **Profundidade histórica com custo mínimo:** 2004–2019 resolvido com uma
+  chamada REST institucional (BCB), eliminando parser posicional, riscos de
+  encoding (latin-1) e conversão PU→taxa da janela antiga.
+- **Rigor quantitativo:** no trecho recente, o PU/Taxa de Ajuste oficial da B3
+  garante a variável-alvo limpa de ruídos intradiários.
+- **Critério de liquidez auditável:** `OpnIntrst` e volume permitem filtro
+  automatizado de vértices líquidos no trecho XML.
+- **Superfície de manutenção reduzida:** apenas um parser (XML) e um crawler
+  para monitorar, em vez de dois formatos e duas fontes.
+
+### Riscos / erros adjacentes a vigiar
+
+- **Emenda metodológica (novo, crítico):** a 7806 é taxa de swap em 360 dias
+  corridos reportada pela BM&F; a série própria é interpolação Flat Forward
+  252 du sobre ajustes de DI1. Não unir sem a validação de sobreposição do
+  item 3.
+- **Rolagem de contrato:** trocas de vencimento do DI1 criam saltos artificiais;
+  usar sempre a série de taxa interpolada, não o contrato cru.
+- **Janela de medição da reação:** a decisão do Copom sai após o fechamento
+  (~18h30); a reação deve ser medida como ajuste D0 → ajuste D+1, e não pelo
+  timestamp da ingestão (lookahead).
+- **Idempotência por chave natural:** a B3 republica arquivos retificados;
+  usar upsert por (data-pregão + ticker) e hash do arquivo, não apenas a
+  existência do nome do arquivo.
+- **Mudança de layout XML:** validar contra o XSD publicado do BVBG.187 para
+  detecção automática de quebra, com retry/backoff e alerta de falha no crawler.
+- **Documentar o método de interpolação** (Flat Forward, 252 du, calendário
+  ANBIMA) e a regra de emenda para reprodutibilidade e defesa metodológica.
+
+## Bloqueante 2 — Limitação do histórico de expectativas por reunião do Copom
+
+**Status:** superado.
+
+### O desafio original
+
+Dificuldade em obter profundidade histórica suficiente de expectativas do
+mercado atreladas ao calendário de reuniões, o que inicialmente reduzia o
+escopo da análise.
+
+### A solução estabelecida
+
+Validação de que os registros desde 2004 podem ser acessados sistematicamente
+via **API Olinda (Banco Central do Brasil)**.
+
+### Por que isso resolve
+
+- A API entrega o dado com chancela institucional, de forma gratuita e contínua.
+- Ao cruzar o histórico de expectativas da API Olinda com a curva limpa do DI
+  (via engenharia dos dados da B3), o pipeline ganha a robustez necessária para
+  treinar o modelo sem furos na linha do tempo.
 
 ## Próximo passo
 
-Confirmar com o mentor se o MVP pode rodar com **fechamento diário (ANBIMA)** e,
-em paralelo, sondar acesso a intradiário da B3. Atualizar este documento ao fechar.
+1. Carga única da SGS 7806 (2004–set/2019) via API BCB.
+2. Pipeline XML BVBG.187 (out/2019–presente): crawler → parser streaming →
+   filtro de liquidez → prazo em du → Flat Forward 252 du.
+3. Validação de emenda no período de sobreposição (~2016–2019) nas janelas
+   de Copom.
+4. Integração Olinda e validação da série final contra o calendário de
+   reuniões do Copom.
