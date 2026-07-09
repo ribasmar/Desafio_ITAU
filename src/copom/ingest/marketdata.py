@@ -123,8 +123,8 @@ def _coletar_focus_paginado(
             "$select": "Indicador,Data,Reuniao,Media,Mediana,numeroRespondentes,baseCalculo",
             "$orderby": "Data desc",
         }
-        # Codifica espaco como %20 (e nao '+'): o parser OData do Olinda rejeita '+'.
-        url = f"{FOCUS_BASE}?{urlencode(params, quote_via=quote, safe='')}"
+        # Codifica espaco como %20 (e nao '+') e preserva '$' literal: o Olinda rejeita '%24'.
+        url = f"{FOCUS_BASE}?{urlencode(params, quote_via=quote, safe='$')}"
         raw = _get_json(url)
         lote = raw.get("value", []) if isinstance(raw, dict) else (raw or [])
         if not lote:
