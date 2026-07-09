@@ -40,7 +40,6 @@ _HEADERS = {
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
 }
 
