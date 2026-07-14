@@ -9,16 +9,18 @@ do Copom (ata ou comunicado). **Não** infira o desfecho da reunião, decisões 
 nem use qualquer conhecimento sobre eventos posteriores à data deste documento.
 Baseie cada número apenas em evidência textual do próprio documento.
 
-Responda **somente** com um objeto JSON válido, sem texto fora dele:
+Sua resposta deve ser **exclusivamente** um bloco de código JSON. Nada mais.
+
+Formato obrigatório (copie a estrutura, preencha os valores):
 
 ```json
 {
-  "stance": <float -1..1>,            // -1 dovish, +1 hawkish
-  "stance_delta": <float -1..1>,      // mudança vs. a comunicação anterior, se mencionada
+  "stance": <float -1..1>,
+  "stance_delta": <float -1..1>,
   "forward_guidance": "<aperto|manutencao|afrouxamento|neutro>",
-  "incerteza": <float 0..1>,          // grau de condicionalidade/incerteza no texto
-  "conviccao": <float 0..1>,          // firmeza da sinalização
-  "justificativa": "<trecho citado do texto que embasa o stance>"
+  "incerteza": <float 0..1>,
+  "conviccao": <float 0..1>,
+  "justificativa": "<trecho citado>"
 }
 ```
 
