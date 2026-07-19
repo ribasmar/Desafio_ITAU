@@ -10,8 +10,24 @@ import re
 
 # Versao do lexico: rastreia qual lista de termos gerou cada score salvo.
 # Incrementar sempre que PALAVRAS_HAWKISH/PALAVRAS_DOVISH mudarem.
-LEXICO_VERSAO = "1.0.0"
-
+LEXICO_VERSAO = "1.1.0"
+# Changelog v1.1.0 (validação histórica 2006-2016, issue Camada 2 + relatório):
+#   Removidos por serem direcionalmente ambíguos (~50/50 entre docs hawkish e
+#   dovish em 84 atas 2006-2016 — indicam que o tema "incerteza/risco" está
+#   sendo discutido, não pra qual lado a política vai):
+#     - "incerteza" (59% hawkish / 41% dovish em 56 docs)
+#     - "riscos" (49% hawkish / 51% dovish em 83 docs)
+#     - "cautela" e "cauteloso" (43% hawkish / 57% dovish em 7 docs)
+#   Removidos por zero ocorrências em 84 atas 2006-2016 e serem redundantes
+#   com sinônimo já presente na lista:
+#     - "desequilíbrio" (zero também em 2025-2026; sem substituto na lista)
+#     - "benignidade" (zero; "benigno" já cobre a mesma ideia, 134 ocorrências)
+#     - "cedendo" (zero; "recuando" já cobre a mesma ideia, 60 ocorrências)
+#   Mantidos apesar de zero em 2006-2016 (vocabulário mais recente do Copom,
+#   confirmado presente nas atas de 2025-2026 — não são termos "quebrados",
+#   são deriva de vocabulário ao longo do tempo):
+#     - "desancoragem", "resiliente"
+ 
 # Lista de palavras que indicam postura hawkish (preocupado, aperto)
 PALAVRAS_HAWKISH = [
     "elevação",
@@ -24,18 +40,13 @@ PALAVRAS_HAWKISH = [
     "aperto",
     "contracionista",
     "restritiva",
-    "cautela",
-    "cauteloso",
-    "incerteza",
-    "riscos",
     "desancoragem",
     "persistência",
     "persistente",
     "resiliente",
     "aquecimento",
-    "desequilíbrio",
 ]
-
+ 
 # Lista de palavras que indicam postura dovish (tranquilo, afrouxamento)
 PALAVRAS_DOVISH = [
     "redução",
@@ -53,10 +64,8 @@ PALAVRAS_DOVISH = [
     "estabilização",
     "ancoragem",
     "desinflação",
-    "benignidade",
     "normalização",
     "alívio",
-    "cedendo",
     "recuando",
 ]
 
