@@ -55,7 +55,7 @@ def _build_record(entry: dict, text: str) -> dict:
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -73,7 +73,7 @@ def main() -> None:
         default=str(PROCESSED_DIR),
         help="Diretório de saída para o dataset processado (padrão: data/processed/)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     raw_path = Path(args.raw_path)
     processed_path = Path(args.processed_path)
