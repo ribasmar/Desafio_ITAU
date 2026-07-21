@@ -1,7 +1,9 @@
 # CopomLens — Testes negados e de borda da ingestao de mercado (marketdata),
 # sem rede: bordas da paginacao $skip/$top do Focus (pagina cheia, parcial,
 # parada por data_inicial e trava max_paginas) e negados do cliente HTTP
-# (_get_json): status != 200 levanta e retries esgotados propagam o erro.
+# (_get_json): status != 200 levanta, retries esgotados propagam o erro e
+# resposta 200 sem JSON valido (corpo vazio/HTML transitorio do SGS) e
+# retentada antes de levantar com o corpo na mensagem.
 import httpx
 import pytest
 
@@ -74,13 +76,18 @@ def test_paginacao_respeita_max_paginas(monkeypatch):
 
 
 class _FakeResp:
-    def __init__(self, status_code):
+    def __init__(self, status_code, corpo_json=True):
         self.status_code = status_code
         self.text = "erro simulado"
+        self.content = b"erro simulado"
+        self.headers = {"content-type": "text/html"}
         self.url = "http://teste"
         self.request = httpx.Request("GET", "http://teste")
+        self._corpo_json = corpo_json
 
     def json(self):
+        if not self._corpo_json:
+            raise ValueError("corpo nao e JSON")
         return {"value": []}
 
 
@@ -117,5 +124,29 @@ def test_get_json_esgota_retries_e_levanta(monkeypatch):
     monkeypatch.setattr(md.httpx, "Client", lambda *a, **k: _FakeClient(estoura))
     monkeypatch.setattr(md.time, "sleep", lambda s: None)
     with pytest.raises(httpx.ConnectTimeout):
+        md._get_json("http://teste")
+    assert len(tentativas) == md._MAX_TENTATIVAS
+
+
+def test_get_json_corpo_nao_json_retenta_e_depois_sucede(monkeypatch):
+    respostas = [_FakeResp(200, corpo_json=False), _FakeResp(200, corpo_json=True)]
+    monkeypatch.setattr(
+        md.httpx, "Client", lambda *a, **k: _FakeClient(lambda: respostas.pop(0))
+    )
+    monkeypatch.setattr(md.time, "sleep", lambda s: None)
+    assert md._get_json("http://teste") == {"value": []}
+    assert not respostas  # consumiu a resposta ruim e a boa
+
+
+def test_get_json_corpo_nao_json_persistente_levanta_com_corpo(monkeypatch):
+    tentativas = []
+
+    def sempre_ruim():
+        tentativas.append(1)
+        return _FakeResp(200, corpo_json=False)
+
+    monkeypatch.setattr(md.httpx, "Client", lambda *a, **k: _FakeClient(sempre_ruim))
+    monkeypatch.setattr(md.time, "sleep", lambda s: None)
+    with pytest.raises(ValueError, match="erro simulado"):
         md._get_json("http://teste")
     assert len(tentativas) == md._MAX_TENTATIVAS
