@@ -106,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
         "Referência da issue: 2006-01-18 a 2016-06-08 · 84 atas — se diferir, "
         "explicar a diferença no PR (ver funil), não ajustar até bater."
     )
+    print(
+        "Com o bônus das atas PDF ingerido (python -m copom.ingest.atas_pdf), "
+        "o esperado passa a 2006-01-18 a 2019-09-18 · 110 atas (84 + 26) e "
+        "134 reações casadas."
+    )
     print(f"\nPainel  -> {out}")
     print(f"Funil   -> {funil_path}")
     return 0

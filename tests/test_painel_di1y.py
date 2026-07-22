@@ -27,7 +27,16 @@ def test_regime_meirelles_e_tombini():
     assert regime_bc("2016-06-08") == "Tombini"
 
 
-@pytest.mark.parametrize("data", ["2002-12-31", "2016-06-09", "2025-01-29"])
+def test_regime_goldfajn_e_campos_neto():
+    # Fronteiras pelas datas de posse; as reuniões vizinhas ficam longe delas.
+    assert regime_bc("2016-06-09") == "Goldfajn"
+    assert regime_bc("2016-07-20") == "Goldfajn"
+    assert regime_bc("2019-02-27") == "Goldfajn"
+    assert regime_bc("2019-02-28") == "Campos Neto"
+    assert regime_bc("2019-09-18") == "Campos Neto"
+
+
+@pytest.mark.parametrize("data", ["2002-12-31", "2025-01-29"])
 def test_regime_fora_da_tabela_falha_alto(data):
     with pytest.raises(ValueError, match="REGIMES_BC"):
         regime_bc(data)
@@ -135,6 +144,34 @@ def test_carregar_reunioes_sem_campos_reconheciveis(tmp_path):
     p = tmp_path / "atas_listadas.json"
     p.write_text(json.dumps([{"foo": 1}]), encoding="utf-8")
     with pytest.raises(ValueError, match="atas_listadas"):
+        carregar_reunioes_listadas(p)
+
+
+def test_carregar_reunioes_data_brasileira_e_dayfirst(tmp_path):
+    # "05/03/2016" é 5 de março (dd/mm), nunca 3 de maio — o parse genérico
+    # americano leria errado sem falhar; o fallback dayfirst evita isso.
+    p = tmp_path / "atas_listadas.json"
+    p.write_text(
+        json.dumps([{"nroReuniao": 197, "dataReferencia": "05/03/2016"}]),
+        encoding="utf-8",
+    )
+    df = carregar_reunioes_listadas(p)
+    assert str(df["data_reuniao"].iloc[0].date()) == "2016-03-05"
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_carregar_reunioes_data_nula_falha_alto_nomeando_entrada(tmp_path):
+    p = tmp_path / "atas_listadas.json"
+    p.write_text(
+        json.dumps(
+            [
+                {"nroReuniao": 116, "dataReferencia": "2006-01-18"},
+                {"nroReuniao": 117, "dataReferencia": None},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="datas inválidas"):
         carregar_reunioes_listadas(p)
 
 

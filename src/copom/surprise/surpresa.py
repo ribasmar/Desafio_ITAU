@@ -22,6 +22,12 @@ from pandas.tseries.offsets import BDay
 # reunião; acima disso o rótulo é considerado mal pareado e a função falha alto.
 TOLERANCIA_ROTULO_DIAS = 10
 
+# Janela máxima aceita entre a reunião e a primeira observação seguinte da
+# série de meta: a meta votada vigora no dia útil seguinte, então um salto
+# maior significa que a série não cobre o pós-reunião (ex.: reuniões de
+# 1998–2003 com a 432 carregada desde 2004) e o pareamento seria espúrio.
+TOLERANCIA_PAREAMENTO_DIAS = 10
+
 # Defasagem máxima aceita entre a publicação da ata e cada pregão vizinho
 # (D0 = véspera, D1 = dia da publicação): 5 dias corridos toleram feriados
 # prolongados sem deixar publicações fora da janela viva da série (out/2019+)
@@ -57,12 +63,19 @@ COPOM_CALENDAR: dict[str, dict[str, date]] = {
 # Regimes de presidência do BC — fato público à época, por tabela (nunca
 # inferido por LLM). Atribuição pela DATA DA REUNIÃO: o texto da ata reflete o
 # comitê presidido por aquele presidente. Meirelles presidiu de 01/01/2003 a
-# 31/12/2010; Tombini de 01/01/2011 até a posse de Goldfajn em 09/06/2016.
+# 31/12/2010; Tombini de 01/01/2011 à posse de Goldfajn (09/06/2016); Goldfajn
+# até a posse de Campos Neto (28/02/2019). Goldfajn e Campos Neto entraram
+# junto com o bônus das atas PDF (reuniões 200–231); nenhuma reunião do Copom
+# ocorre perto dessas fronteiras de posse (última de Tombini: 08/06/2016;
+# primeira de Goldfajn: 20/07/2016; última de Goldfajn: 06/02/2019; primeira
+# de Campos Neto: 20/03/2019), então a atribuição é insensível a ±dias.
 # Fora da cobertura, regime_bc falha alto: estender a tabela é decisão
 # explícita e documentada, não default herdado.
 REGIMES_BC: tuple[tuple[date, date, str], ...] = (
     (date(2003, 1, 1), date(2010, 12, 31), "Meirelles"),
     (date(2011, 1, 1), date(2016, 6, 8), "Tombini"),
+    (date(2016, 6, 9), date(2019, 2, 27), "Goldfajn"),
+    (date(2019, 2, 28), date(2024, 12, 31), "Campos Neto"),
 )
 
 
@@ -163,9 +176,23 @@ def carregar_reunioes_listadas(caminho: str | Path) -> pd.DataFrame:
             "atas_listadas sem campos reconhecíveis de número/data de reunião; "
             f"campos disponíveis: {sorted(df.columns)}"
         )
+    # ISO 8601 primeiro (formato do BCB); só então dd/mm/aaaa (dayfirst),
+    # aplicado APENAS ao resíduo que o parse ISO não resolveu — um parse
+    # genérico leria "05/03/2016" como 3 de maio sem erro, e reparsear datas
+    # ISO com dayfirst gera warning do pandas. Datas inválidas/nulas viram NaT
+    # nos dois parses e falham alto com as entradas nomeadas.
     datas = pd.to_datetime(df[campo_data], format="ISO8601", errors="coerce")
+    faltantes = datas.isna()
+    if faltantes.any():
+        datas = datas.copy()
+        datas.loc[faltantes] = pd.to_datetime(
+            df.loc[faltantes, campo_data], dayfirst=True, errors="coerce"
+        )
     if datas.isna().any():
-        datas = pd.to_datetime(df[campo_data], dayfirst=True)
+        quebradas = df.loc[datas.isna(), campo_data].head(5).tolist()
+        raise ValueError(
+            f"atas_listadas com datas inválidas em {campo_data}: {quebradas}"
+        )
     if getattr(datas.dt, "tz", None) is not None:
         datas = datas.dt.tz_localize(None)
     out = pd.DataFrame(
@@ -323,15 +350,23 @@ def decisao_apos_reuniao(selic: pd.DataFrame, data_reuniao: pd.Timestamp) -> dic
     """Decisão da Selic associada à reunião de `data_reuniao`.
 
     nivel_pre: último valor com data <= data_reuniao (vigente antes da decisão).
-    decisao:   primeiro valor com data > data_reuniao (novo alvo, vigência D+1).
+    decisao:   primeiro valor com data > data_reuniao (novo alvo, vigência D+1),
+               desde que dentro de TOLERANCIA_PAREAMENTO_DIAS — acima disso a
+               série não cobre o pós-reunião e o pareamento seria espúrio
+               (uma reunião de 1998 não pode herdar a meta de 2004).
     delta:     decisao − nivel_pre.
-    Sem observação posterior (reunião mais recente), os campos ficam NaN.
+    Sem observação posterior (reunião mais recente) ou fora da cobertura, os
+    campos ficam NaN.
     """
     data_reuniao = pd.Timestamp(data_reuniao)
     antes = selic.loc[selic["data"] <= data_reuniao, "selic_meta"]
-    depois = selic.loc[selic["data"] > data_reuniao, "selic_meta"]
+    depois = selic.loc[selic["data"] > data_reuniao]
     nivel_pre = float(antes.iloc[-1]) if len(antes) else math.nan
-    decisao = float(depois.iloc[0]) if len(depois) else math.nan
+    decisao = math.nan
+    if len(depois):
+        primeira = depois.iloc[0]
+        if (primeira["data"] - data_reuniao).days <= TOLERANCIA_PAREAMENTO_DIAS:
+            decisao = float(primeira["selic_meta"])
     return {"nivel_pre": nivel_pre, "decisao": decisao, "delta": decisao - nivel_pre}
 
 
@@ -420,10 +455,16 @@ def montar_painel(
 
     Atenção: o rótulo é rankeado dentro das reuniões PRESENTES no dataset; use
     montar_painel_di1y (com a lista oficial de reuniões) para o alvo DI 1Y.
+
+    Uma reunião = uma linha, mesmo quando o BCB diverge de si próprio: há caso
+    real de dataReferencia diferente entre ata e comunicado da MESMA reunião
+    (reunião 94: ata 2004-03-17, comunicado 2004-03-18). A deduplicação é por
+    numero_reuniao, preferindo a data da ATA (objeto primário do estudo).
     """
     reunioes = (
-        dataset[["numero_reuniao", "data_reuniao"]]
-        .drop_duplicates()
+        dataset.sort_values(["numero_reuniao", "tipo"])  # "ata" < "comunicado"
+        [["numero_reuniao", "data_reuniao"]]
+        .drop_duplicates("numero_reuniao")
         .sort_values("data_reuniao")
         .reset_index(drop=True)
     )

@@ -63,6 +63,14 @@ def test_reuniao_anterior_a_serie_retorna_nan_no_nivel_pre(selic):
     assert math.isnan(r["nivel_pre"])
 
 
+def test_reuniao_fora_da_cobertura_nao_pareia_decisao_espuria(selic):
+    # Reunião meses antes do início da série: a primeira observação posterior
+    # existe (2024-01-29), mas está longe demais — parear seria atribuir a
+    # meta de 2024 a uma reunião antiga. O guard devolve NaN.
+    r = decisao_apos_reuniao(selic, "2023-06-01")
+    assert math.isnan(r["decisao"]) and math.isnan(r["delta"])
+
+
 # --- corte point-in-time do Focus -----------------------------------------
 
 
@@ -157,6 +165,21 @@ def test_dataset_jsonl_truncado_falha_com_numero_da_linha(tmp_path):
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
+def test_painel_reuniao_com_datas_divergentes_vira_uma_linha(selic, focus):
+    # Caso real (reunião 94): ata com dataReferencia 2004-03-17 e comunicado com
+    # 2004-03-18 — uma reunião não pode virar duas linhas; vence a data da ata.
+    dataset = pd.DataFrame(
+        {
+            "numero_reuniao": [260, 260],
+            "data_reuniao": pd.to_datetime(["2024-01-31", "2024-02-01"]),
+            "tipo": ["ata", "comunicado"],
+        }
+    )
+    painel = montar_painel(dataset, selic, focus)
+    assert len(painel) == 1
+    assert str(painel.iloc[0]["data_reuniao"].date()) == "2024-01-31"
+
+
 def test_painel_sintetico(selic, focus):
     dataset = pd.DataFrame(
         {
@@ -185,12 +208,28 @@ def test_painel_sintetico(selic, focus):
     not (DATA_DIR / "raw" / "selic_meta.csv").exists(), reason="dados reais ausentes"
 )
 def test_painel_dados_reais_sem_nan_inesperado():
+    # Com o histórico completo (1998–2026), NaN deixa de ser sempre erro e
+    # passa a codificar fronteira de cobertura: decisão só existe a partir da
+    # carga da série 432 (2004+) e Focus por reunião só a partir da R1/2006 —
+    # os mesmos cortes documentados no funil do alvo DI 1Y.
     dataset = carregar_dataset(DATA_DIR / "processed" / "copom_dataset.jsonl")
     selic_real = carregar_selic_meta(DATA_DIR / "raw" / "selic_meta.csv")
     focus_real = carregar_focus(DATA_DIR / "raw" / "focus_selic.csv")
     painel = montar_painel(dataset, selic_real, focus_real)
     assert len(painel) == dataset["numero_reuniao"].nunique()
+
     ultima = painel["data_reuniao"].idxmax()
     completas = painel.drop(index=ultima)
-    assert completas[["decisao", "mediana_focus", "surpresa"]].notna().all().all()
+    inicio_serie = selic_real["data"].min()
+
+    cobertas = completas[completas["data_reuniao"] >= inicio_serie]
+    fora_da_serie = completas[completas["data_reuniao"] < inicio_serie]
+    assert cobertas["decisao"].notna().all()
+    assert fora_da_serie["decisao"].isna().all()  # sem pareamento espúrio
+
+    com_focus = cobertas[cobertas["data_reuniao"] >= pd.Timestamp("2006-01-01")]
+    pre_focus = completas[completas["data_reuniao"] < pd.Timestamp("2006-01-01")]
+    assert com_focus[["mediana_focus", "surpresa"]].notna().all().all()
+    assert pre_focus[["mediana_focus", "surpresa"]].isna().all().all()
+
     assert painel["decisao"].dropna().between(2.0, 20.0).all()
