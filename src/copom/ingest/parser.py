@@ -23,6 +23,16 @@ def parse_html(data: str) -> str:
     return text
 
 
+def _texto_limpo(entry: dict, raw_text: str) -> str:
+    """Texto limpo conforme a fonte do documento: HTML passa pelo strip de
+    tags; fonte="pdf" já chega extraído e normalizado pela ingestão de PDFs —
+    aqui só colapsa espaços, porque um '<' literal em texto de PDF (ex.:
+    "inflação < 4,5%") seria comido pelo regex de tag."""
+    if entry.get("fonte") == "pdf":
+        return re.sub(r"\s+", " ", raw_text).strip()
+    return parse_html(raw_text)
+
+
 def _load_dataset(path: Path) -> list[dict]:
     dataset_path = path / DATASET_FILENAME
     if not dataset_path.exists():
@@ -51,6 +61,7 @@ def _build_record(entry: dict, text: str) -> dict:
         "numero_reuniao": entry["numero_reuniao"],
         "data_reuniao": entry["data_reuniao"],
         "filename": entry["filename"],
+        "fonte": entry.get("fonte", "html"),
         "text": text,
     }
 
@@ -102,7 +113,7 @@ def main(argv: list[str] | None = None) -> None:
             logger.warning("Arquivo raw não encontrado: %s (pulando)", filepath)
             continue
         raw_text = filepath.read_text(encoding="utf-8")
-        clean_text = parse_html(raw_text)
+        clean_text = _texto_limpo(entry, raw_text)
         record = _build_record(entry, clean_text)
         new_records.append(record)
 
