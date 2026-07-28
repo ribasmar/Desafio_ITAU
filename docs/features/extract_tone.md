@@ -1,6 +1,6 @@
 # `extract_tone()` (`src/copom/features/extract_tone.py`)
 
-Funcao principal da camada 2 do pipeline Copom Quant AI. Recebe um
+Funcao principal da camada 2 do pipeline CopomLens. Recebe um
 documento Copom e retorna scores de tom (stance, forward_guidance,
 incerteza, conviccao) com estatisticas de estabilidade.
 
@@ -17,6 +17,7 @@ document dict
 │  2. Loop n_runs vezes:          │
 │     └─ promptExec.execute()     │
 │        (template → LLM → JSON)  │
+│     └─ STANCE_MAP[label → float]│
 │  3. Agrega campos numericos     │
 │     (mean / std por campo)      │
 │  4. Coleta metadados            │
@@ -33,9 +34,12 @@ extract_tone(
     document: dict,
     model_id: str | None = None,
     seed: int = 42,
-    n_runs: int = 3,
+    n_runs: int = 1,
     prompt_path: str | Path | None = None,
-    provider: str = "ollama",
+    debug: bool = False,
+    provider: str | None = None,
+    openrouter_api_key: str | None = None,
+    openrouter_provider: str | None = None,
 ) -> dict
 ```
 
@@ -43,37 +47,66 @@ extract_tone(
 
 | Parametro | Tipo | Padrao | Descricao |
 |---|---|---|---|
-| `document` | `dict` | (obrigatorio) | Documento Copom com chaves `text`, `tipo`, `available_time`, `numero_reuniao` |
-| `model_id` | `str \| None` | `None` | Identificador do modelo. Se `None`, resolvido via `LLM_MODEL_<PROVIDER>` entao default do provider |
+| `document` | `dict` | (obrigatorio) | Documento com chaves `text`, `tipo`, `available_time`, `numero_reuniao` |
+| `model_id` | `str \| None` | `None` | Identificador do modelo (slug OpenRouter ou caminho GGUF) |
 | `seed` | `int` | `42` | Semente aleatoria para reprodutibilidade |
-| `n_runs` | `int` | `3` | Numero de chamadas identicas. Com `temperature=0`, resultados devem ser identicos |
-| `prompt_path` | `str \| Path \| None` | `None` | Caminho do template markdown. Padrao: `prompts/copom_v1.md` |
-| `provider` | `str` | `"ollama"` | Backend LLM: `local`, `ollama` ou `openrouter` |
+| `n_runs` | `int` | `1` | Numero de chamadas identicas (CLI usa `n_runs=3`) |
+| `prompt_path` | `str \| Path \| None` | `None` | Template markdown. Padrao: `prompts/cb_lens_v1.md` |
+| `debug` | `bool` | `False` | Logs detalhados (latencia, tokens, resposta) |
+| `provider` | `str \| None` | `None` | Backend: `local` ou `openrouter`. Fallback: `LLM_PROVIDER` |
+| `openrouter_api_key` | `str \| None` | `None` | Chave API OpenRouter |
+| `openrouter_provider` | `str \| None` | `None` | Provider upstream forcado (ex.: `Groq`) |
 
 ## Retorno
 
-Dict JSON-serializavel com scores de tom, metadados e estabilidade:
+Dict JSON-serializavel com scores, metadados e estabilidade:
 
 ```json
 {
-  "stance": 0.30,
-  "stance_delta": 0.0,
+  "stance": 0.5,
+  "stance_label": "moderadamente_hawkish",
   "forward_guidance": "aperto",
-  "incerteza": 0.40,
-  "conviccao": 0.60,
-  "justificativa": "O Comite de Politica Monetaria decidiu...",
-  "model_id": "qwen/qwen-2.5-7b-instruct",
+  "incerteza": 0.25,
+  "conviccao": 0.75,
+  "justificativa": "O Copom decidiu aumentar a taxa Selic...",
+  "model_id": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
   "seed": 42,
-  "prompt_version": "copom_v1",
-  "numero_reuniao": 270,
+  "prompt_version": "cb_lens_v1",
+  "numero_reuniao": 117,
   "tipo": "ata",
-  "available_time": "2025-05-13",
+  "available_time": "2006-03-16",
   "stability": {
-    "stance":       {"mean": 0.30, "std": 0.00, "values": [0.30, 0.30, 0.30]},
-    "stance_delta": {"mean": 0.00, "std": 0.00, "values": [0.00, 0.00, 0.00]},
-    "incerteza":    {"mean": 0.40, "std": 0.00, "values": [0.40, 0.40, 0.40]},
-    "conviccao":    {"mean": 0.60, "std": 0.00, "values": [0.60, 0.60, 0.60]}
+    "stance":     {"mean": 0.5, "std": 0.0, "values": [0.5, 0.5, 0.5]},
+    "incerteza":  {"mean": 0.25, "std": 0.0, "values": [0.25, 0.25, 0.25]},
+    "conviccao":  {"mean": 0.75, "std": 0.0, "values": [0.75, 0.75, 0.75]}
   }
+}
+```
+
+### Mapeamento `stance_label` → `stance`
+
+O LLM retorna um rotulo categorico (`"moderadamente_hawkish"`)
+em vez de um float. A funcao importa `STANCE_MAP` de
+`promptExec.py` e deriva `stance` como:
+
+```python
+result["stance"] = STANCE_MAP.get(result["stance_label"], 0.0)
+```
+
+O `stance_label` original e preservado no output para
+rastreabilidade.
+
+### Em caso de erro (todas as runs falham)
+
+```json
+{
+  "error": "All runs failed",
+  "numero_reuniao": 180,
+  "tipo": "ata",
+  "available_time": "2012-07-05",
+  "model_id": "...",
+  "seed": 42,
+  "prompt_version": "cb_lens_v1"
 }
 ```
 
@@ -81,8 +114,8 @@ Dict JSON-serializavel com scores de tom, metadados e estabilidade:
 
 | Campo | Tipo | Faixa | Descricao |
 |---|---|---|---|
-| `stance` | `float` | `[-1.0, 1.0]` | Tom geral (-1 = pessimista, +1 = optimista) |
-| `stance_delta` | `float` | `[-1.0, 1.0]` | Mudanca em relacao a reuniao anterior |
+| `stance` | `float` | `[-1.0, 1.0]` | Derivado de `stance_label` via `STANCE_MAP` |
+| `stance_label` | `str` | 15 rotulos PT | Classificacao categorica do tom |
 | `forward_guidance` | `str` | `aperto \| manutencao \| afrouxamento \| neutro` | Sinalizacao de politica monetaria |
 | `incerteza` | `float` | `[0.0, 1.0]` | Nivel de incerteza expresso |
 | `conviccao` | `float` | `[0.0, 1.0]` | Nivel de conviccao na decisao |
@@ -95,77 +128,81 @@ Para cada campo numerico, a funcao calcula:
 | Sub-campo | Descricao |
 |---|---|
 | `mean` | Media aritmetica das `n_runs` execucoes |
-| `std` | Desvio padrao (0.0 se `n_runs=1` ou saidas identicas) |
-| `values` | Lista com o valor bruto de cada execucao |
+| `std` | Desvio padrao (0.0 se saidas identicas) |
+| `values` | Lista com o valor de cada execucao |
 
-Com `temperature=0` + semente fixa, `std` deve ser `0.0` (saidas identicas).
-Se `std > 0`, indica nao-determinismo no provider.
+Com `temperature=0` + semente fixa, `std` deve ser `0.0`
+(saidas identicas). `std=0.0` com `n_runs=3` comprova
+reprodutibilidade.
 
 ### Metadados
 
 | Campo | Fonte | Descricao |
 |---|---|---|
-| `model_id` | `LLMClient.model` | Modelo efetivamente resolvido apos fallbacks |
+| `model_id` | `LLMClient.model` | Modelo efetivamente resolvido |
 | `seed` | parametro | Semente utilizada |
-| `prompt_version` | `prompt_path.stem` | Nome do template (ex.: `copom_v1`) |
+| `prompt_version` | `prompt_path.stem` | Nome do template (ex.: `cb_lens_v1`) |
 | `numero_reuniao` | `document["numero_reuniao"]` | Numero da ata/comunicado |
 | `tipo` | `document["tipo"]` | `"ata"` ou `"comunicado"` |
 | `available_time` | `document["available_time"]` | Data de publicacao |
 
 ## Exemplos de uso
 
-### Basico
+### Basico (local)
 
 ```python
 from copom.features.extract_tone import extract_tone
 
 document = {
-    "numero_reuniao": 270,
+    "numero_reuniao": 117,
     "tipo": "ata",
-    "available_time": "2025-05-13",
+    "available_time": "2006-03-16",
     "text": "O Comite de Politica Monetaria decidiu..."
 }
 
-result = extract_tone(document, provider="openrouter")
-print(result["stance"])           # ex.: 0.8
-print(result["forward_guidance"]) # ex.: "aperto"
-print(result["stability"]["stance"]["std"])  # 0.0 (deterministico)
+result = extract_tone(document, provider="local")
+print(result["stance"])              # ex.: 0.5
+print(result["stance_label"])        # ex.: "moderadamente_hawkish"
+print(result["forward_guidance"])    # ex.: "aperto"
 ```
 
-### Com modelo customizado
+### OpenRouter com Qwen3-32B
 
 ```python
 result = extract_tone(
     document,
-    model_id="meta-llama/llama-3.1-8b-instruct",
     provider="openrouter",
-    seed=123,
-    n_runs=5,
+    model_id="qwen/qwen-3-32b",
+    n_runs=1,
 )
 ```
 
 ### Via CLI
 
 ```bash
-PYTHONPATH=src python -m copom.models --provider openrouter --ata 270
+python -m copom.models --ata-range 116:227 --debug
 ```
 
-O CLI Internamente chama `extract_tone()` com `n_runs=3` para cada
-documento do dataset.
+O CLI chama `extract_tone()` com `n_runs=3` para cada documento,
+mapeia `stance_label` → `stance`, e computa `stance_delta` entre
+reunioes consecutivas no pos-processamento.
 
 ## Dependencias
 
 | Modulo | Uso |
 |---|---|
-| `copom.models.llm_client.LLMClient` | Cliente LLM unificado |
+| `copom.models.llm_client.LLMClient` | Cliente LLM unificado (local + openrouter) |
 | `copom.models.promptExec.execute` | Pipeline de prompt unico (template → LLM → JSON → validacao) |
+| `copom.models.promptExec.STANCE_MAP` | Mapeamento label → float (15 valores) |
 
 ## Variaveis de ambiente
 
 | Variavel | Uso |
 |---|---|
-| `LLM_PROVIDER` | Backend padrao (se `provider` nao for especificado) |
-| `LLM_MODEL_OPENROUTER` | Modelo OpenRouter padrao |
+| `LLM_PROVIDER` | Backend padrao (`local` ou `openrouter`) |
+| `LLM_MODEL_LOCAL` | Modelo GGUF local |
+| `LLM_MODEL_OPENROUTER` | Slug do modelo OpenRouter |
 | `OPENROUTER_API_KEY` | Chave de API OpenRouter |
+| `OPENROUTER_PROVIDER` | Provider upstream forcado |
 | `PROMPT_PATH` | Template de prompt padrao |
 | `SEED` | Semente padrao |

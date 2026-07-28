@@ -85,14 +85,19 @@ Frase de encerramento da demo:
 
 ```json
 {
-  "stance": 0.6,
-  "stance_delta": +0.2,
+  "stance": 0.5,
+  "stance_label": "moderadamente_hawkish",
   "forward_guidance": "aperto",
-  "incerteza": 0.3,
-  "conviccao": 0.8,
-  "justificativa": "O Comitê avalia que a convergência da inflação para a meta requer postura mais contracionista..."
+  "incerteza": 0.25,
+  "conviccao": 0.75,
+  "justificativa": "O Copom decidiu aumentar a taxa Selic..."
 }
 ```
+
+O campo `stance` é derivado deterministicamente de `stance_label` via
+um mapeamento fixo de 15 rótulos categóricos em português definidos
+no prompt `cb_lens_v1.md`. Os 15 níveis discretos garantem granularidade
+consistente com greedy decoding (temperature=0).
 
 ---
 

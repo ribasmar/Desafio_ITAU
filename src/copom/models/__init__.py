@@ -1,4 +1,4 @@
-"""Camada do pipeline Copom Quant AI. Ver README e docs/SPRINT_ate_02-07.md."""
+"""Camada do pipeline CopomLens. LLM deterministico via llama.cpp."""
 from .llm_client import LLMClient
 
 __all__ = ["LLMClient"]
