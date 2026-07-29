@@ -96,7 +96,7 @@ Frase de encerramento da demo:
 
 O campo `stance` é derivado deterministicamente de `stance_label` via
 um mapeamento fixo de 15 rótulos categóricos em português definidos
-no prompt `cb_lens_v1.md`. Os 15 níveis discretos garantem granularidade
+no prompt `copom_v2.md`. Os 15 níveis discretos garantem granularidade
 consistente com greedy decoding (temperature=0).
 
 ---

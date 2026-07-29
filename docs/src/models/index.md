@@ -71,7 +71,7 @@ arg --model  →  LLM_MODEL_OPENROUTER (openrouter)  →  LLM_MODEL_LOCAL (local
 | `LLAMA_SERVER_URL` | URL do llama-server |
 | `OPENROUTER_API_KEY` | Chave de API OpenRouter |
 | `OPENROUTER_PROVIDER` | Provider upstream forcado (ex.: `Groq`) |
-| `PROMPT_PATH` | Template de prompt (default: `cb_lens_v1.md`) |
+| `PROMPT_PATH` | Template de prompt (default: `copom_v2.md`) |
 | `SEED` | Semente para reprodutibilidade |
 | `TEMPERATURE` | Temperatura de amostragem |
 

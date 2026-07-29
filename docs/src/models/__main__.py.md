@@ -24,7 +24,7 @@ python -m copom.models [OPCOES]
 | `--limit` | (todos) | Apenas os N primeiros documentos |
 | `--dataset` | `data/processed/copom_dataset.jsonl` | Dataset de entrada (JSONL) |
 | `--output` | `data/processed/tone_results.jsonl` | Arquivo de saida (JSONL) |
-| `--prompt` | `prompts/cb_lens_v1.md` | Template de prompt |
+| `--prompt` | `prompts/copom_v2.md` | Template de prompt |
 | `--debug` | `False` | Logs detalhados em `data/processed/debug.log` e stderr |
 
 ### Formato de `--ata-range`
@@ -100,7 +100,7 @@ Cada linha do arquivo de saida e um objeto JSON (JSONL) com:
   "justificativa": "...",
   "model_id": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
   "seed": 42,
-  "prompt_version": "cb_lens_v1",
+  "prompt_version": "copom_v2",
   "numero_reuniao": 117,
   "tipo": "ata",
   "available_time": "2006-03-16",
