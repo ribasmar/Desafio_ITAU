@@ -133,8 +133,11 @@ def collect_minutes(count: int = 20, base_path: Path = RAW_DIR) -> int:
             continue
         meeting_date = detail["dataReferencia"]
         publication_date = detail["dataPublicacao"]
+        text = detail.get("textoAta")
+        if not text:
+            logger.warning("Ata %d sem texto (campo vazio, provável PDF-only)", num)
+            continue
         filename = f"ata_{num}_{meeting_date}.txt"
-        text = detail["textoAta"]
         saved = _save_raw_file(base, filename, text)
         if not saved:
             continue
@@ -170,8 +173,11 @@ def collect_statements(count: int = 20, base_path: Path = RAW_DIR) -> int:
         if detail is None:
             continue
         meeting_date = detail["dataReferencia"]
+        text = detail.get("textoComunicado")
+        if not text:
+            logger.warning("Comunicado %d sem texto (campo vazio, provável PDF-only)", num)
+            continue
         filename = f"comunicado_{num}_{meeting_date}.txt"
-        text = detail["textoComunicado"]
         saved = _save_raw_file(base, filename, text)
         if not saved:
             continue

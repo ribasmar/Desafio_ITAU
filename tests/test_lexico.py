@@ -12,22 +12,23 @@ from copom.features.lexico import (
 
 
 def test_score_hawkish_puro():
-    r = calcular_lexico("A elevação da inflação exige cautela e vigilância.")
+    r = calcular_lexico("A elevação da inflação exige alta vigilância.")
     assert r["n_hawkish"] == 3
     assert r["n_dovish"] == 0
     assert r["score"] == 1.0
 
 
 def test_score_dovish_puro():
-    r = calcular_lexico("A desaceleração e o arrefecimento apontam queda.")
+    r = calcular_lexico("A desaceleração e o recuo apontam queda.")
     assert r["n_dovish"] == 3
+    assert r["n_hawkish"] == 0
     assert r["score"] == -1.0
 
 
 def test_ocorrencias_multiplas_contam():
-    r = calcular_lexico("Cautela, cautela e mais cautela.")
+    r = calcular_lexico("Elevação, elevação e mais elevação.")
     assert r["n_hawkish"] == 3
-    assert r["palavras_hawkish"]["cautela"] == 3
+    assert r["palavras_hawkish"]["elevação"] == 3
 
 
 def test_score_misto_ponderado_por_ocorrencia():
@@ -41,7 +42,7 @@ def test_fronteira_de_palavra_evita_substring():
 
 
 def test_case_insensitive():
-    assert calcular_lexico("CAUTELA")["n_hawkish"] == 1
+    assert calcular_lexico("ELEVAÇÃO")["n_hawkish"] == 1
 
 
 def test_texto_neutro_score_zero():
