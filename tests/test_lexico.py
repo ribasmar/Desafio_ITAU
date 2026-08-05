@@ -12,15 +12,16 @@ from copom.features.lexico import (
 
 
 def test_score_hawkish_puro():
-    r = calcular_lexico("A elevação da inflação exige aperto e vigilância.")
+    r = calcular_lexico("A elevação da inflação exige alta vigilância.")
     assert r["n_hawkish"] == 3
     assert r["n_dovish"] == 0
     assert r["score"] == 1.0
 
 
 def test_score_dovish_puro():
-    r = calcular_lexico("A desaceleração e o arrefecimento apontam queda.")
+    r = calcular_lexico("A desaceleração e o recuo apontam queda.")
     assert r["n_dovish"] == 3
+    assert r["n_hawkish"] == 0
     assert r["score"] == -1.0
 
 

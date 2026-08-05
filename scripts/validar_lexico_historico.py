@@ -152,58 +152,85 @@ def main() -> None:
     for termo in sorted(PALAVRAS_DOVISH, key=lambda t: total_dovish.get(t, 0)):
         print(f"  {termo:20s} {total_dovish.get(termo, 0)}")
 
-    # === Passo 4: revisão de termos ambíguos com evidência textual ==============
-    print(f"\n=== Passo 4: termos ambíguos — incerteza / riscos / cautela ===")
+# === Passo 4: leave-one-out + gate calibrado pela taxa base do corpus =======
+    # v2: o gate original (40%-60% fixo) assumia que o corpus é ~50/50 entre
+    # documentos hawkish e dovish. Testamos e não é: o corpus real tem uma
+    # taxa base própria. Um termo sem sinal nenhum deveria refletir ESSA taxa,
+    # não 50%. O gate agora reprova um termo se o split dele estiver perto
+    # DEMAIS da taxa base do corpus (não perto de 50% fixo).
+    print(f"\n=== Passo 4: leave-one-out + gate calibrado pela taxa base do corpus ===")
 
-    import re
+    # Taxa base do corpus: proporção de documentos hawkish entre os que têm
+    # score != 0 (mesmo critério usado pra classificar cada termo abaixo).
+    docs_hawkish_corpus = sum(1 for r in resultados if r["score"] > 0)
+    docs_dovish_corpus = sum(1 for r in resultados if r["score"] < 0)
+    total_corpus = docs_hawkish_corpus + docs_dovish_corpus
+    taxa_base = docs_hawkish_corpus / total_corpus
 
-    TERMOS_AMBIGUOS = ["incerteza", "riscos", "cautela"]
+    MARGEM = 0.10  # termo reprova se ficar a menos de 10 p.p. da taxa base
+    print(f"Taxa base do corpus: {docs_hawkish_corpus}/{total_corpus} = {taxa_base:.1%} hawkish "
+          f"(vs. {1-taxa_base:.1%} dovish)")
+    print(f"Gate: termo REPROVADO se |pct_hawkish do termo - taxa base| <= {MARGEM:.0%}\n")
 
-    for termo in TERMOS_AMBIGUOS:
-        print(f"\n--- '{termo}' ---")
-        docs_com_termo_hawkish = 0  # documento com score geral > 0
-        docs_com_termo_dovish = 0   # documento com score geral < 0
-        ocorrencias_totais = 0
-        frases_exemplo = []
-
-        for r in resultados:
-            texto = None
-            for reg in atas:
-                if reg["numero_reuniao"] == r["numero_reuniao"]:
-                    texto = reg["text"]
-                    break
-            if texto is None:
-                continue
-
-            n_no_doc = len(re.findall(rf"\b{termo}\b", texto, flags=re.IGNORECASE))
-            if n_no_doc == 0:
-                continue
-            ocorrencias_totais += n_no_doc
-            if r["score"] > 0:
-                docs_com_termo_hawkish += 1
-            elif r["score"] < 0:
-                docs_com_termo_dovish += 1
-
-            if len(frases_exemplo) < 4:
-                # pega a primeira frase com o termo, pra leitura de contexto
-                for frase in re.split(r"(?<=[.!?])\s+", texto):
-                    if re.search(rf"\b{termo}\b", frase, flags=re.IGNORECASE):
-                        sinal = "hawkish" if r["score"] > 0 else ("dovish" if r["score"] < 0 else "neutro")
-                        frases_exemplo.append((r["numero_reuniao"], sinal, frase.strip()[:220]))
-                        break
-
-        total_docs_com_termo = docs_com_termo_hawkish + docs_com_termo_dovish
-        if total_docs_com_termo:
-            pct_hawkish = docs_com_termo_hawkish / total_docs_com_termo
-            print(f"Ocorrências totais: {ocorrencias_totais}")
-            print(f"Aparece em {total_docs_com_termo} documentos: "
-                  f"{docs_com_termo_hawkish} de score hawkish (>0) [{pct_hawkish:.0%}], "
-                  f"{docs_com_termo_dovish} de score dovish (<0) [{1-pct_hawkish:.0%}]")
-            print("Exemplos de frase (numero_reuniao, score geral do doc, trecho):")
-            for num, sinal, frase in frases_exemplo:
-                print(f"  [{num}, {sinal}] \"{frase}...\"")
+    def score_loo(contagem_hawkish, contagem_dovish, termo, eh_hawkish):
+        n_h = sum(contagem_hawkish.values())
+        n_d = sum(contagem_dovish.values())
+        if eh_hawkish:
+            n_h -= contagem_hawkish.get(termo, 0)
         else:
-            print("Termo não encontrado em nenhum documento do período.")
+            n_d -= contagem_dovish.get(termo, 0)
+        total = n_h + n_d
+        if total == 0:
+            return 0.0
+        return (n_h - n_d) / total
+
+    def testar_termo(termo, eh_hawkish):
+        docs_hawkish = 0
+        docs_dovish = 0
+        for r in resultados:
+            contagem = r["palavras_hawkish"] if eh_hawkish else r["palavras_dovish"]
+            if contagem.get(termo, 0) == 0:
+                continue
+            s = score_loo(r["palavras_hawkish"], r["palavras_dovish"], termo, eh_hawkish)
+            if s > 0:
+                docs_hawkish += 1
+            elif s < 0:
+                docs_dovish += 1
+        total = docs_hawkish + docs_dovish
+        if total == 0:
+            return None
+        pct_hawkish = docs_hawkish / total
+        distancia_da_base = abs(pct_hawkish - taxa_base)
+        return {
+            "termo": termo, "total_docs": total,
+            "pct_hawkish": pct_hawkish, "pct_dovish": 1 - pct_hawkish,
+            "distancia_da_base": distancia_da_base,
+            "reprovado": distancia_da_base <= MARGEM,
+        }
+
+    reprovados = []
+    aprovados = []
+    for termo in PALAVRAS_HAWKISH:
+        res = testar_termo(termo, eh_hawkish=True)
+        if res is None:
+            continue
+        (reprovados if res["reprovado"] else aprovados).append(("hawkish", res))
+    for termo in PALAVRAS_DOVISH:
+        res = testar_termo(termo, eh_hawkish=False)
+        if res is None:
+            continue
+        (reprovados if res["reprovado"] else aprovados).append(("dovish", res))
+
+    print(f"--- REPROVADOS (a <= {MARGEM:.0%} da taxa base, {len(reprovados)} termos) ---")
+    for lista, r in sorted(reprovados, key=lambda x: x[1]["distancia_da_base"]):
+        print(f"  [{lista:8s}] {r['termo']:16s} hawkish={r['pct_hawkish']:.0%} "
+              f"(taxa base={taxa_base:.0%}, dist={r['distancia_da_base']:.0%})  "
+              f"(n={r['total_docs']} docs)  <-- REPROVADO")
+
+    print(f"\n--- Aprovados ({len(aprovados)} termos), ordenado por distância da base (menor pra maior) ---")
+    for lista, r in sorted(aprovados, key=lambda x: x[1]["distancia_da_base"]):
+        print(f"  [{lista:8s}] {r['termo']:16s} hawkish={r['pct_hawkish']:.0%} "
+              f"(dist={r['distancia_da_base']:.0%})  (n={r['total_docs']} docs)")
 
 
 if __name__ == "__main__":
