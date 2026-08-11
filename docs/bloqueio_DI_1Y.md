@@ -60,29 +60,50 @@ existia para fabricar.
 
 ### Funil da amostra (medido ao vivo, não estimado)
 
-| requisito                                  | sobram |
-|--------------------------------------------|--------|
-| atas listadas pelo BCB (1998–2026)         | 259    |
-| ... com texto HTML                         | 227    |
-| ... com alvo DI 1Y (7806 viva)             | 108    |
-| ... com Focus por reunião (começa R1/2006) | 84     |
+| requisito                                    | sobram |
+|----------------------------------------------|--------|
+| atas listadas pelo BCB (1998–2026)           | 259    |
+| ... com texto extraído (API/HTML ou PDF)     | 259    |
+| ... com alvo DI 1Y (7806 viva na publicação) | 134    |
+| ... com Focus por reunião (começa R1/2006)   | 110    |
 
-**Janela final: 2006-01-18 a 2016-06-08 · 84 atas.** Cada corte tem contagem e
-razão gravadas em `data/processed/funil_amostra.json` (gerado por
-`python -m copom.surprise`); regime por presidente do BC (40 Meirelles /
-44 Tombini) vem de tabela de fato público (`REGIMES_BC`), nunca do LLM.
+**Janela final: 2006-01-18 a 2019-09-18 · 110 atas** (reuniões 116 a 225). Cada
+corte tem contagem e razão gravadas em `data/processed/funil_amostra.json`
+(gerado por `python -m copom.surprise`); regime por presidente do BC
+(40 Meirelles / 44 Tombini / 21 Goldfajn / 5 Campos Neto) vem de tabela de fato
+público (`REGIMES_BC`), nunca do LLM.
 
-Validação da reação medida ao vivo (108/108 casadas, zero falhas):
-dp = 12.3 bps · min = −31 · max = +33 · |reação| mediana = 7.0 bps ·
-reações > 1 bp: 95/108. A série tem sinal; o alvo fecha.
+A tabela acima difere da primeira medição (227 / 108 / 84) por um motivo só: o
+fallback de PDF (`python -m copom.ingest.atas_pdf`) passou a dar texto às atas
+que existiam apenas em PDF, e nenhuma ata listada fica mais sem texto. O 84
+continua no relatório, agora como o que sempre foi — a fatia do painel cujo
+texto vem da API em HTML:
+
+```
+84 (texto via API/HTML, reuniões 116–199) + 26 (texto via PDF, 200–225) = 110
+110 + 2 escoradas sem alvo (226 e 227, publicadas depois de 30/09/2019)  = 112
+```
+
+Os números e essas identidades são recalculados por
+`python scripts/numeros_amostra.py`, que sai com código 1 se deixarem de fechar.
+
+Validação da reação medida ao vivo (134/134 casadas, zero falhas):
+dp = 11.4 bps · min = −31 · max = +33 · |reação| mediana = 7.0 bps ·
+reações > 1 bp: 113/134 (mais 16 exatamente em 1,0 bp). A série tem sinal; o
+alvo fecha.
 
 **Fora de escopo (bônus, só se sobrar tempo):**
 
 - 24 atas de 2004–2005: Focus por reunião não existe; a série mensal do Olinda
   (`ExpectativaMercadoMensais`, já verificada em `scripts/check_olinda.py`)
   serviria de proxy.
-- 26 atas de jul/2016–set/2019: existem só em PDF; a `urlPdfAta` fica
-  registrada em `data/raw/atas_sem_texto.json` pela ingestão.
+- atas de out/2019 em diante: a 7806 termina em 30/09/2019, então não há alvo na
+  mesma metodologia — é o que o pipeline B3/XML destravaria.
+
+**Já incorporado (era bônus):** as 26 atas de jul/2016–set/2019 que existiam só
+em PDF. A `urlPdfAta` vem do próprio JSON do BCB, a ingestão grava
+`fonte: "pdf"` por documento no `manifest.json` e as que continuam sem texto
+ficam em `data/raw/atas_sem_texto.json`.
 
 ### Riscos / erros adjacentes a vigiar
 
@@ -101,8 +122,16 @@ reações > 1 bp: 95/108. A série tem sinal; o alvo fecha.
   parcial, a última reunião baixada de um ano viraria R1 daquele ano.
 - **Nenhum número herdado de default:** quantidade de ingestão, janelas de
   série e cortes do painel são explícitos e logados; se o painel der diferente
-  de 84 linhas, explicar a diferença (via `funil_amostra.json`) no PR — não
+  de 110 linhas, explicar a diferença (via `funil_amostra.json`) no PR — não
   ajustar até bater.
+- **Quebra estrutural na reunião 200 (2016-07-20):** três mudanças caem na mesma
+  reunião e são colineares nesta amostra — a ata encurta de 27,2 mil para 13,9
+  mil caracteres e perde a estrutura antiga, a fonte do texto vira PDF, e o
+  regime vira Goldfajn (o conjunto das 26 atas de fonte PDF é idêntico ao de
+  Goldfajn + Campos Neto). Efeito de regime, de método de extração e de
+  redesenho editorial da ata não são separáveis no painel de 110: todo resultado
+  precisa ser repetido na subamostra homogênea de 84, e features contadas por
+  ocorrência entram normalizadas por tamanho do texto, nunca em contagem bruta.
 
 ## Bloqueante 2 — Limitação do histórico de expectativas por reunião do Copom
 
