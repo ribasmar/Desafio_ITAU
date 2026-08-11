@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from copom.surprise.surpresa import (
+    ETAPA_TEXTO,
     MAX_DEFASAGEM_D0_DIAS,
     carregar_di1y,
     carregar_reunioes_listadas,
@@ -254,8 +255,8 @@ def test_painel_di1y_funil_com_razoes(cenario):
     assert all(e["motivo"] for e in funil["etapas"])
 
     cortadas = {(d["numero_reuniao"], d["etapa"]) for d in funil["descartes"]}
-    assert (100, "com texto HTML") in cortadas
-    assert (201, "com texto HTML") in cortadas
+    assert (100, ETAPA_TEXTO) in cortadas
+    assert (201, ETAPA_TEXTO) in cortadas
     assert (101, "com Focus por reunião") in cortadas
     assert all(d["motivo"] for d in funil["descartes"])
 

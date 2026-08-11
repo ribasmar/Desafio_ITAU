@@ -28,6 +28,12 @@ TOLERANCIA_ROTULO_DIAS = 10
 # 1998–2003 com a 432 carregada desde 2004) e o pareamento seria espúrio.
 TOLERANCIA_PAREAMENTO_DIAS = 10
 
+# Nome da etapa do funil que corta atas sem texto. O texto vem do campo
+# textoAta da API (HTML) ou do fallback de PDF, então a etapa não pode se
+# chamar "com texto HTML": desde a ingestão dos PDFs ela remove só as atas sem
+# nenhuma das duas fontes.
+ETAPA_TEXTO = "com texto extraído (API/HTML ou PDF)"
+
 # Defasagem máxima aceita entre a publicação da ata e cada pregão vizinho
 # (D0 = véspera, D1 = dia da publicação): 5 dias corridos toleram feriados
 # prolongados sem deixar publicações fora da janela viva da série (out/2019+)
@@ -446,15 +452,21 @@ def reacao_di1y(di1y: pd.DataFrame, data_publicacao) -> dict | None:
 
 
 def montar_painel(
-    dataset: pd.DataFrame, selic: pd.DataFrame, focus: pd.DataFrame
+    dataset: pd.DataFrame,
+    reunioes_oficiais: pd.DataFrame,
+    selic: pd.DataFrame,
+    focus: pd.DataFrame,
 ) -> pd.DataFrame:
     """Painel por reunião: decisão pareada, mediana Focus PIT e surpresa.
 
     Colunas: numero_reuniao, data_reuniao, rotulo_focus, nivel_pre, decisao,
     delta, mediana_focus, surpresa (= decisao − mediana_focus).
 
-    Atenção: o rótulo é rankeado dentro das reuniões PRESENTES no dataset; use
-    montar_painel_di1y (com a lista oficial de reuniões) para o alvo DI 1Y.
+    `reunioes_oficiais` é obrigatório e vem de carregar_reunioes_listadas: o
+    rótulo R{k}/{ano} é rankeado contra o calendário oficial do BCB, nunca
+    contra as reuniões presentes no dataset. Com dataset parcial, a k-ésima
+    reunião baixada de um ano receberia o rótulo de outra reunião — e o rótulo
+    errado casa com a pesquisa Focus errada.
 
     Uma reunião = uma linha, mesmo quando o BCB diverge de si próprio: há caso
     real de dataReferencia diferente entre ata e comunicado da MESMA reunião
@@ -468,9 +480,20 @@ def montar_painel(
         .sort_values("data_reuniao")
         .reset_index(drop=True)
     )
+    datas_oficiais = reunioes_oficiais["data_reuniao"]
+    ausentes = sorted(
+        set(pd.DatetimeIndex(reunioes["data_reuniao"]))
+        - set(pd.DatetimeIndex(datas_oficiais))
+    )
+    if ausentes:
+        raise ValueError(
+            "reuniões do dataset ausentes da lista oficial do BCB: "
+            f"{[str(d.date()) for d in ausentes[:5]]} — recarregue "
+            "atas_listadas.json com a ingestão atual"
+        )
     linhas = []
     for reuniao in reunioes.itertuples(index=False):
-        rotulo = rotulo_focus(reuniao.data_reuniao, reunioes["data_reuniao"])
+        rotulo = rotulo_focus(reuniao.data_reuniao, datas_oficiais)
         decisao = decisao_apos_reuniao(selic, reuniao.data_reuniao)
         mediana = mediana_focus_pre_reuniao(focus, rotulo, reuniao.data_reuniao)
         linhas.append(
@@ -519,7 +542,8 @@ def montar_painel_di1y(
 
     Etapas do funil:
       0. atas listadas pelo BCB (lista oficial completa, inclui as sem texto);
-      1. com texto HTML no dataset (as demais estão em atas_sem_texto.json);
+      1. com texto extraído no dataset — campo textoAta da API (HTML) ou
+         fallback de PDF; as que sobram sem texto estão em atas_sem_texto.json;
       2. com reação DI 1Y casada (publicação dentro da janela viva da SGS 7806,
          02/01/2004 a 30/09/2019, com D0 e D+1);
       3. com Focus por reunião e decisão pareada (o recurso do Olinda rotula
@@ -564,16 +588,22 @@ def montar_painel_di1y(
             {
                 "numero_reuniao": int(r.numero_reuniao),
                 "data_reuniao": str(pd.Timestamp(r.data_reuniao).date()),
-                "etapa": "com texto HTML",
-                "motivo": "sem texto HTML no dataset (textoAta nulo ou HTTP 500; ver atas_sem_texto.json)",
+                "etapa": ETAPA_TEXTO,
+                "motivo": (
+                    "sem texto no dataset: textoAta nulo ou HTTP 500 no detalhe "
+                    "e ata não ingerida via PDF (ver atas_sem_texto.json)"
+                ),
             }
         )
     etapas.append(
         {
-            "etapa": "com texto HTML",
+            "etapa": ETAPA_TEXTO,
             "restantes": len(atas),
             "removidas": n0 - len(atas),
-            "motivo": "textoAta nulo ou HTTP 500 no detalhe: ata publicada só em PDF",
+            "motivo": (
+                "texto vindo do campo textoAta da API (HTML) ou do fallback de "
+                "PDF; remove só as atas sem nenhuma das duas fontes"
+            ),
         }
     )
 
