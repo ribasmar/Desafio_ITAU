@@ -1,10 +1,14 @@
-from copom.ingest.collect import main as collect_main
-from copom.ingest.parser import main as parser_main
+# CopomLens — ponto de entrada da ingestão de documentos: coleta (collect) e
+# parse (parser) em sequência, repassando --last e --path para as duas etapas.
+from pathlib import Path
+
+from copom.ingest import collect, parser
 
 
-def main():
-    collect_main()
-    parser_main()
+def main() -> None:
+    args = collect._parse_args()
+    collect.executar(args.last, Path(args.path))
+    parser.main(["--raw-path", args.path])
 
 
 if __name__ == "__main__":
