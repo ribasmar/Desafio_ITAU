@@ -11,6 +11,7 @@ import pytest
 from copom.surprise.surpresa import (
     carregar_dataset,
     carregar_focus,
+    carregar_reunioes_listadas,
     carregar_selic_meta,
     decisao_apos_reuniao,
     mediana_focus_pre_reuniao,
@@ -42,6 +43,29 @@ def focus():
     )
 
 
+@pytest.fixture
+def reunioes_oficiais():
+    # Calendário oficial do ano, incluindo reuniões que podem não estar no
+    # dataset carregado: é contra ele que o rótulo R{k}/{ano} é rankeado.
+    return pd.DataFrame(
+        {
+            "numero_reuniao": [260, 261],
+            "data_reuniao": pd.to_datetime(["2024-01-31", "2024-02-02"]),
+        }
+    )
+
+
+@pytest.fixture
+def focus_261():
+    return pd.DataFrame(
+        {
+            "reuniao": ["R2/2024"],
+            "data": pd.to_datetime(["2024-02-01"]),
+            "mediana": [11.25],
+        }
+    )
+
+
 # --- pareamento reunião → decisão seguinte -------------------------------
 
 
@@ -61,6 +85,14 @@ def test_reuniao_sem_decisao_posterior_retorna_nan(selic):
 def test_reuniao_anterior_a_serie_retorna_nan_no_nivel_pre(selic):
     r = decisao_apos_reuniao(selic, "2023-12-01")
     assert math.isnan(r["nivel_pre"])
+
+
+def test_reuniao_fora_da_cobertura_nao_pareia_decisao_espuria(selic):
+    # Reunião meses antes do início da série: a primeira observação posterior
+    # existe (2024-01-29), mas está longe demais — parear seria atribuir a
+    # meta de 2024 a uma reunião antiga. O guard devolve NaN.
+    r = decisao_apos_reuniao(selic, "2023-06-01")
+    assert math.isnan(r["decisao"]) and math.isnan(r["delta"])
 
 
 # --- corte point-in-time do Focus -----------------------------------------
@@ -157,7 +189,24 @@ def test_dataset_jsonl_truncado_falha_com_numero_da_linha(tmp_path):
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
-def test_painel_sintetico(selic, focus):
+def test_painel_reuniao_com_datas_divergentes_vira_uma_linha(
+    selic, focus, reunioes_oficiais
+):
+    # Caso real (reunião 94): ata com dataReferencia 2004-03-17 e comunicado com
+    # 2004-03-18 — uma reunião não pode virar duas linhas; vence a data da ata.
+    dataset = pd.DataFrame(
+        {
+            "numero_reuniao": [260, 260],
+            "data_reuniao": pd.to_datetime(["2024-01-31", "2024-02-01"]),
+            "tipo": ["ata", "comunicado"],
+        }
+    )
+    painel = montar_painel(dataset, reunioes_oficiais, selic, focus)
+    assert len(painel) == 1
+    assert str(painel.iloc[0]["data_reuniao"].date()) == "2024-01-31"
+
+
+def test_painel_sintetico(selic, focus, focus_261, reunioes_oficiais):
     dataset = pd.DataFrame(
         {
             "numero_reuniao": [260, 260, 261],
@@ -165,14 +214,9 @@ def test_painel_sintetico(selic, focus):
             "tipo": ["ata", "comunicado", "ata"],
         }
     )
-    focus_261 = pd.DataFrame(
-        {
-            "reuniao": ["R2/2024"],
-            "data": pd.to_datetime(["2024-02-01"]),
-            "mediana": [11.25],
-        }
+    painel = montar_painel(
+        dataset, reunioes_oficiais, selic, pd.concat([focus, focus_261])
     )
-    painel = montar_painel(dataset, selic, pd.concat([focus, focus_261]))
     assert list(painel["numero_reuniao"]) == [260, 261]
     assert list(painel["rotulo_focus"]) == ["R1/2024", "R2/2024"]
     r260 = painel.iloc[0]
@@ -181,16 +225,67 @@ def test_painel_sintetico(selic, focus):
     assert math.isnan(r261["decisao"]) and math.isnan(r261["surpresa"])
 
 
+def test_painel_com_dataset_parcial_rotula_pelo_calendario_oficial(
+    selic, focus, focus_261, reunioes_oficiais
+):
+    # A armadilha original: com dataset parcial, rankear dentro do dataset faria
+    # da 261 a "primeira reunião de 2024" (R1/2024) e casaria a surpresa com a
+    # pesquisa Focus da reunião anterior. Contra o calendário oficial, ela
+    # continua sendo R2/2024 mesmo sozinha no dataset.
+    dataset = pd.DataFrame(
+        {
+            "numero_reuniao": [261],
+            "data_reuniao": pd.to_datetime(["2024-02-02"]),
+            "tipo": ["ata"],
+        }
+    )
+    painel = montar_painel(
+        dataset, reunioes_oficiais, selic, pd.concat([focus, focus_261])
+    )
+    assert list(painel["rotulo_focus"]) == ["R2/2024"]
+
+
+def test_painel_com_reuniao_fora_do_calendario_oficial_falha(
+    selic, focus, reunioes_oficiais
+):
+    dataset = pd.DataFrame(
+        {
+            "numero_reuniao": [262],
+            "data_reuniao": pd.to_datetime(["2024-03-20"]),
+            "tipo": ["ata"],
+        }
+    )
+    with pytest.raises(ValueError, match="ausentes da lista oficial"):
+        montar_painel(dataset, reunioes_oficiais, selic, focus)
+
+
 @pytest.mark.skipif(
     not (DATA_DIR / "raw" / "selic_meta.csv").exists(), reason="dados reais ausentes"
 )
 def test_painel_dados_reais_sem_nan_inesperado():
+    # Com o histórico completo (1998–2026), NaN deixa de ser sempre erro e
+    # passa a codificar fronteira de cobertura: decisão só existe a partir da
+    # carga da série 432 (2004+) e Focus por reunião só a partir da R1/2006 —
+    # os mesmos cortes documentados no funil do alvo DI 1Y.
     dataset = carregar_dataset(DATA_DIR / "processed" / "copom_dataset.jsonl")
+    reunioes_reais = carregar_reunioes_listadas(DATA_DIR / "raw" / "atas_listadas.json")
     selic_real = carregar_selic_meta(DATA_DIR / "raw" / "selic_meta.csv")
     focus_real = carregar_focus(DATA_DIR / "raw" / "focus_selic.csv")
-    painel = montar_painel(dataset, selic_real, focus_real)
+    painel = montar_painel(dataset, reunioes_reais, selic_real, focus_real)
     assert len(painel) == dataset["numero_reuniao"].nunique()
+
     ultima = painel["data_reuniao"].idxmax()
     completas = painel.drop(index=ultima)
-    assert completas[["decisao", "mediana_focus", "surpresa"]].notna().all().all()
+    inicio_serie = selic_real["data"].min()
+
+    cobertas = completas[completas["data_reuniao"] >= inicio_serie]
+    fora_da_serie = completas[completas["data_reuniao"] < inicio_serie]
+    assert cobertas["decisao"].notna().all()
+    assert fora_da_serie["decisao"].isna().all()  # sem pareamento espúrio
+
+    com_focus = cobertas[cobertas["data_reuniao"] >= pd.Timestamp("2006-01-01")]
+    pre_focus = completas[completas["data_reuniao"] < pd.Timestamp("2006-01-01")]
+    assert com_focus[["mediana_focus", "surpresa"]].notna().all().all()
+    assert pre_focus[["mediana_focus", "surpresa"]].isna().all().all()
+
     assert painel["decisao"].dropna().between(2.0, 20.0).all()
