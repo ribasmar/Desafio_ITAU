@@ -6,9 +6,9 @@ requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",
-    # scipy é usado por scripts/analise/04_robustez.py (mannwhitneyu, levene).
-    # O pacote copom não depende dele: o p-valor do Clark-West sai de math.erfc,
-    # que é stdlib e mais preciso na cauda direita.
+    # scipy entra por dois caminhos: scripts/analise/04_robustez.py (levene) e
+    # copom.surprise.evento.estudo_evento (mannwhitneyu). Já o p-valor do
+    # Clark-West sai de math.erfc, stdlib e mais preciso na cauda direita.
     "scipy>=1.11",
     "scikit-learn>=1.3",
     "statsmodels>=0.14",

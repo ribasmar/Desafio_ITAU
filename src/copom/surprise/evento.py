@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 GAP_MAXIMO_DIAS = 7
 
@@ -103,8 +104,6 @@ def estudo_evento(di: pd.DataFrame, painel_comunicado: pd.DataFrame) -> dict:
     categoria — dia de comunicado que coincidisse com dia de ata seria erro de
     desenho, ja barrado em ``montar_painel_comunicado``.
     """
-    from scipy import stats
-
     var = variacoes_diarias(di)
     eventos = dias_de_evento(painel_comunicado)
     inicio = min(painel_comunicado["d0_comunicado"].min(), painel_comunicado["data_publicacao_ata"].min())
