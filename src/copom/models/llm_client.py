@@ -14,6 +14,25 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Substrings de IDs de modelo cujo modo de raciocínio precisa ser desligado na
+# extração de JSON (se deixado ativo, consome o teto de tokens e devolve
+# content=null). Não-reasoning não recebem o campo (rejeitariam no Groq).
+_REASONING_MODEL_HINTS = (
+    "qwen3",
+    "deepseek-r1",
+    "deepseek-reasoner",
+    "o1",
+    "o3",
+    "o4",
+    "gpt-5",
+    "grok",
+    "llama-4",
+    "gemini-2.5",
+    "kimi",
+    "thinking",
+    "reasoning",
+)
+
 
 class LLMClient:
     """Deterministic LLM interface for llama.cpp and OpenRouter.
@@ -49,10 +68,11 @@ class LLMClient:
         model: str | None = None,
         seed: int | None = None,
         temperature: float = 0.0,
-        max_tokens: int = 30000,
+        max_tokens: int = 800,
         max_retries: int = 3,
         openrouter_api_key: str | None = None,
         openrouter_provider: str | None = None,
+        json_schema: dict | None = None,
         debug: bool = False,
     ) -> None:
         self.provider = provider or os.getenv("LLM_PROVIDER", "local")
@@ -87,6 +107,7 @@ class LLMClient:
         self.openrouter_provider = (
             openrouter_provider or os.getenv("OPENROUTER_PROVIDER", "")
         )
+        self.json_schema = json_schema
         self.debug = debug
 
     # ------------------------------------------------------------------
@@ -122,6 +143,10 @@ class LLMClient:
             "cache_prompt": False,
             "n_keep": -1,
         }
+        if self.json_schema is not None:
+            # O schema deixa de ser pedido no prompt e passa a ser imposto
+            # pelo decoder (gramática GBNF do llama-server).
+            payload["json_schema"] = self.json_schema
 
         url = f"{self.server_url}/completion"
         t0 = time.perf_counter()
@@ -193,6 +218,18 @@ class LLMClient:
             "top_p": 1.0,
             "max_tokens": self.max_tokens,
         }
+        if self.json_schema is not None:
+            # Groq (único provedor sem quantização) não suporta "json_schema"
+            # strict no roteamento (404 "No endpoints found"). "json_object"
+            # garante JSON válido; o schema em si é imposto pelo prompt +
+            # validação no código (promptExec._validate / divergencia).
+            payload["response_format"] = {"type": "json_object"}
+        # Modelos com modo de raciocínio híbrido (ex.: Qwen3) precisam do
+        # thinking desligado, senão os tokens vão para o "reasoning" e o
+        # "content" sai vazio. Modelos não-reasoning (ex.: Llama 3.3) não
+        # suportam o campo e rejeitariam — por isso é condicional.
+        if any(h in model for h in _REASONING_MODEL_HINTS):
+            payload["reasoning"] = {"enabled": False}
         if self.openrouter_provider:
             payload["provider"] = {
                 "order": [self.openrouter_provider],
@@ -221,6 +258,13 @@ class LLMClient:
                     elapsed = time.perf_counter() - t0
 
                     content = data["choices"][0]["message"]["content"]
+                    if content is None:
+                        # Qwen3-32B pode consumir todo o teto com reasoning e
+                        # devolver content=null; trata como falha transiente
+                        # para cair no retry (com seed diferente).
+                        raise RuntimeError(
+                            "OpenRouter returned empty content (reasoning overflow)"
+                        )
                     if not isinstance(content, str):
                         content = str(content)
 

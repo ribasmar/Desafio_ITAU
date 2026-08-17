@@ -14,11 +14,12 @@ from pathlib import Path
 from ..models.llm_client import LLMClient
 from ..models.promptExec import execute as exec_prompt
 from ..models.promptExec import STANCE_MAP
+from ..models.promptExec import TONE_JSON_SCHEMA
 
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
-PROMPT_PATH_DEFAULT = os.getenv("PROMPT_PATH") or str(PROMPTS_DIR / "copom_v2.md")
+PROMPT_PATH_DEFAULT = os.getenv("PROMPT_PATH") or str(PROMPTS_DIR / "copom_v3.md")
 
 _NUMERIC_FIELDS = ["stance", "incerteza", "conviccao"]
 
@@ -61,6 +62,7 @@ def extract_tone(
         model=model_id, seed=seed, debug=debug,
         provider=provider, openrouter_api_key=openrouter_api_key,
         openrouter_provider=openrouter_provider,
+        json_schema=TONE_JSON_SCHEMA,
     )
     resolved_model = llm.model
     prompt_path = Path(prompt_path) if prompt_path else Path(PROMPT_PATH_DEFAULT)
@@ -75,8 +77,10 @@ def extract_tone(
     for run_idx in range(n_runs):
         try:
             result = exec_prompt(llm, document, prompt_path)
+            # Rótulo desconhecido vira NaN, nunca neutro (0.0) — coerção
+            # silenciosa para um valor plausível enviesaria amostra pequena.
             result["stance"] = STANCE_MAP.get(
-                result.get("stance_label", ""), 0.0
+                result.get("stance_label", ""), float("nan")
             )
             runs.append(result)
         except ValueError as e:

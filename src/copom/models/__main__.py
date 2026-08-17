@@ -21,7 +21,7 @@ from copom.features.extract_tone import extract_tone
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 _DEFAULT_MODEL = "Qwen2.5-14B-Instruct-Q5_K_M.gguf"
-_DEFAULT_PROMPT = "copom_v2.md"
+_DEFAULT_PROMPT = "copom_v3.md"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -229,20 +229,6 @@ def main() -> None:
             }
             results.append(err_doc)
             print(f"ERROR: {e}")
-
-    # ── Post-processing: stance_delta ─────────────────────────────────
-    results.sort(key=lambda r: r.get("numero_reuniao", 0) or 0)
-    prev_stance: float | None = None
-    for r in results:
-        if "error" in r:
-            r["stance_delta"] = None
-            prev_stance = None
-            continue
-        if prev_stance is None:
-            r["stance_delta"] = 0.0
-        else:
-            r["stance_delta"] = round(r.get("stance", 0.0) - prev_stance, 4)
-        prev_stance = r.get("stance", 0.0)
 
     # ── Write output ──────────────────────────────────────────────────
     with open(output_path, "w", encoding="utf-8") as out:

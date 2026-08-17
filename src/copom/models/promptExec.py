@@ -22,7 +22,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
-PROMPT_PATH_DEFAULT = os.getenv("PROMPT_PATH") or str(PROMPTS_DIR / "copom_v2.md")
+PROMPT_PATH_DEFAULT = os.getenv("PROMPT_PATH") or str(PROMPTS_DIR / "copom_v3.md")
 
 # ── forward_guidance normalization ──────────────────────────────────
 
@@ -90,6 +90,32 @@ STANCE_MAP: dict[str, float] = {
 }
 
 _STANCE_LABELS: set[str] = set(STANCE_MAP.keys())
+
+# ── schema (gramática GBNF / response_format) ─────────────────────────
+
+# Imposto pelo decoder na extração de tom: rótulo só pode ser um dos 15,
+# forward_guidance um dos 4, e os floats ficam dentro de [0,1] por construção.
+# (LLMClient._generate_local / _generate_openrouter usam este dict como schema.)
+TONE_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "stance_label": {"type": "string", "enum": sorted(_STANCE_LABELS)},
+        "forward_guidance": {
+            "type": "string",
+            "enum": ["aperto", "manutencao", "afrouxamento", "neutro"],
+        },
+        "incerteza": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "conviccao": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "justificativa": {"type": "string"},
+    },
+    "required": [
+        "stance_label",
+        "forward_guidance",
+        "incerteza",
+        "conviccao",
+        "justificativa",
+    ],
+}
 
 # ── schema ──────────────────────────────────────────────────────────
 
