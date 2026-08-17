@@ -35,7 +35,7 @@ Prever o *número* da Selic não tem valor — já está precificado (Focus + cu
 ## 5. Pipeline (5 camadas)
 
 1. **Ingestão + timestamping** → dataset point-in-time (atas, comunicados, DI, Focus).
-2. **Extração de tom (LLM como função, temp 0)** → `{stance, stance_delta, forward_guidance, incerteza, conviccao, justificativa}` + **baseline léxico** em paralelo.
+2. **Extração de tom (LLM como função, temp 0)** → `{stance_label, forward_guidance, incerteza, conviccao, justificativa}` (15 rótulos categóricos em português + mapeamento fixo para float) + **baseline léxico** em paralelo. `stance` derivado deterministicamente de `stance_label`.
 3. **Surpresa precificada** → `surpresa_decisao = Selic_efetiva − Selic_esperada` (Focus/DI).
 4. **Modelo preditivo aninhado (walk-forward)**: (1) só surpresa → (2) + tom léxico → (3) + tom-LLM. O **ganho incremental (1)→(2)→(3)** é o resultado-manchete.
 5. **Estratégia + backtest**: previsão → posição em DI 1Y → P&L líquido de custos → Sharpe, drawdown vs. baseline ingênuo.
@@ -87,5 +87,4 @@ Time de **Engenharia da Computação (UTFPR)** + validação estatística + ment
 
 ## 11. Ainda em aberto
 
-- Granularidade de mercado: intradiário vs. fechamento (condiciona a janela do evento).
-- Modelo do extrator open-source específico + verificação do cutoff de treino (para o teste de contaminação).
+- Granularidade de mercado: intradiario vs. fechamento (condiciona a janela do evento).

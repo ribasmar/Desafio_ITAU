@@ -1,95 +1,114 @@
 """
-Deterministic LLM client for Copom Quant AI.
-Supports local (llama.cpp), Ollama, and OpenRouter providers.
+Deterministic LLM client for CopomLens.
+Backends: llama.cpp (local via /completion) and OpenRouter (API).
 """
 
+import logging
 import os
 import time
-from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+# Substrings de IDs de modelo cujo modo de raciocínio precisa ser desligado na
+# extração de JSON (se deixado ativo, consome o teto de tokens e devolve
+# content=null). Não-reasoning não recebem o campo (rejeitariam no Groq).
+_REASONING_MODEL_HINTS = (
+    "qwen3",
+    "deepseek-r1",
+    "deepseek-reasoner",
+    "o1",
+    "o3",
+    "o4",
+    "gpt-5",
+    "grok",
+    "llama-4",
+    "gemini-2.5",
+    "kimi",
+    "thinking",
+    "reasoning",
+)
+
 
 class LLMClient:
-    """Deterministic LLM interface with pluggable backends.
+    """Deterministic LLM interface for llama.cpp and OpenRouter.
 
     Parameters
     ----------
     provider : str, optional
-        One of ``"local"``, ``"ollama"``, ``"openrouter"``.
+        ``"local"`` (llama.cpp) or ``"openrouter"``.
         Falls back to ``LLM_PROVIDER`` env var, then ``"local"``.
+    server_url : str, optional
+        URL of a running ``llama-server`` instance (provider=local).
+        Falls back to ``LLAMA_SERVER_URL`` env var, then ``http://127.0.0.1:8080``.
     model : str, optional
-        Model name / path. Default depends on provider (see ``DEFAULT_MODELS``).
+        Model identifier. Falls back to provider-specific env var.
     seed : int, optional
         Random seed for reproducible output. Falls back to ``SEED`` env var, then ``42``.
     temperature : float
         Sampling temperature. ``0.0`` = greedy / deterministic.
-    llama_server_url : str, optional
-        URL of a running ``llama-server`` instance (OpenAI-compatible endpoint).
-        Falls back to ``LLAMA_SERVER_URL`` env var, then ``http://127.0.0.1:8080``.
+    max_tokens : int
+        Maximum tokens in the response.
+    max_retries : int
+        Number of connection retries on transient failures.
     openrouter_api_key : str, optional
         API key for OpenRouter. Falls back to ``OPENROUTER_API_KEY`` env var.
-    ollama_host : str, optional
-        Ollama server URL. Falls back to ``OLLAMA_HOST`` env var, then
-        ``http://localhost:11434``.
-
-    Reproducibility
-    ----------------
-    Every provider uses ``temperature=0.0`` + a fixed ``seed``, so the same
-    prompt always yields the same output.  The ``model_id`` and ``seed`` are
-    recorded alongside every score.
+    debug : bool
+        Enable debug logging (latency, token counts, response preview).
     """
-
-    DEFAULT_MODELS: dict[str, str] = {
-        "local": "Meta-Llama-3.1-8B-Instruct-Q8_0.gguf",
-        "ollama": "llama3.1:8B",
-        "openrouter": "meta-llama/llama-3.1-8b-instruct",
-    }
 
     def __init__(
         self,
         provider: str | None = None,
+        server_url: str | None = None,
         model: str | None = None,
         seed: int | None = None,
         temperature: float = 0.0,
-        llama_server_url: str | None = None,
+        max_tokens: int = 800,
+        max_retries: int = 3,
         openrouter_api_key: str | None = None,
-        openrouter_provider:str | None = None, 
-        ollama_host: str | None = None,
+        openrouter_provider: str | None = None,
+        json_schema: dict | None = None,
+        debug: bool = False,
     ) -> None:
         self.provider = provider or os.getenv("LLM_PROVIDER", "local")
-        self.seed = seed if seed is not None else int(os.getenv("SEED", "42"))
-        self.temperature = temperature
 
-        model_env_key = f"LLM_MODEL_{self.provider.upper()}"
-        self.model = (
-            model
-            or os.getenv(model_env_key)
-            or os.getenv("OPENROUTER_MODEL")  # backward-compat fallback
-            or self.DEFAULT_MODELS.get(self.provider, "")
-        )
-
-        self.llama_server_url = (
-            llama_server_url
+        self.server_url = (
+            server_url
             or os.getenv("LLAMA_SERVER_URL")
             or "http://127.0.0.1:8080"
         )
+
+        if self.provider == "openrouter":
+            self.model = (
+                model
+                or os.getenv("LLM_MODEL_OPENROUTER")
+                or "qwen/qwen-3-32b"
+            )
+        else:
+            self.model = (
+                model
+                or os.getenv("LLM_MODEL_LOCAL")
+                or os.getenv("LLAMA_MODEL_PATH")
+                or ""
+            )
+
+        self.seed = seed if seed is not None else int(os.getenv("SEED", "42"))
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.max_retries = max_retries
         self.openrouter_api_key = (
-            openrouter_api_key
-            or os.getenv("OPENROUTER_API_KEY", "")
+            openrouter_api_key or os.getenv("OPENROUTER_API_KEY", "")
         )
         self.openrouter_provider = (
-            openrouter_provider
-            or os.getenv("OPENROUTER_PROVIDER","")
+            openrouter_provider or os.getenv("OPENROUTER_PROVIDER", "")
         )
-        self.ollama_host = (
-            ollama_host
-            or os.getenv("OLLAMA_HOST")
-            or "http://localhost:11434"
-        )
+        self.json_schema = json_schema
+        self.debug = debug
 
     # ------------------------------------------------------------------
     # Public API
@@ -101,172 +120,182 @@ class LLMClient:
         model: str | None = None,
         seed: int | None = None,
     ) -> str:
-        """Send *prompt* to the configured LLM and return the raw response."""
+        """Send *prompt* to the configured provider."""
         model = model or self.model
-        seed = seed if seed is not None else self.seed
+        seed_val = seed if seed is not None else self.seed
 
-        dispatch = {
-            "local": self._generate_llama_server,
-            "ollama": self._generate_ollama,
-            "openrouter": self._generate_openrouter,
-        }
-        handler = dispatch.get(self.provider)
-        if handler is None:
-            raise ValueError(f"Unknown provider: {self.provider}")
-
-        return handler(prompt, model, seed)
-
-    def generate_from_file(
-        self,
-        path: str,
-        model: str | None = None,
-        seed: int | None = None,
-    ) -> str:
-        """Read *path* as a prompt and send it to the LLM."""
-        if not os.path.exists(path):
-            return f"Error: file not found '{path}'"
-
-        with open(path, "r", encoding="utf-8") as f:
-            return self.generate(f.read(), model=model, seed=seed)
+        if self.provider == "local":
+            return self._generate_local(prompt, model, seed_val)
+        if self.provider == "openrouter":
+            return self._generate_openrouter(prompt, model, seed_val)
+        raise ValueError(f"Unknown provider: {self.provider}")
 
     # ------------------------------------------------------------------
-    # Local (llama-server via HTTP)
+    # Local (llama.cpp /completion)
     # ------------------------------------------------------------------
 
-    def _generate_llama_server(self, prompt: str, model: str, seed: int) -> str:
-        url = f"{self.llama_server_url}/v1/chat/completions"
-
-        system = self._extract_system(prompt)
-        user = self._extract_user(prompt)
-
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": user})
-
+    def _generate_local(self, prompt: str, _model: str, seed_val: int) -> str:
         payload = {
-            "model": model,
-            "messages": messages,
+            "prompt": prompt,
             "temperature": self.temperature,
-            "seed": seed,
-            "max_tokens": 512,
+            "seed": seed_val,
+            "n_predict": self.max_tokens,
+            "cache_prompt": False,
+            "n_keep": -1,
         }
+        if self.json_schema is not None:
+            # O schema deixa de ser pedido no prompt e passa a ser imposto
+            # pelo decoder (gramática GBNF do llama-server).
+            payload["json_schema"] = self.json_schema
 
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, json=payload)
-                resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"].strip()
-        except httpx.ConnectError:
-            return (
-                f"Could not connect to llama-server at {self.llama_server_url}. "
-                "Make sure llama-server is running (see docs/src/models/llm_client.md)."
-            )
-        except Exception as e:
-            return f"llama-server error: {e}"
+        url = f"{self.server_url}/completion"
+        t0 = time.perf_counter()
 
-    # ------------------------------------------------------------------
-    # Ollama (local server via Python client)
-    # ------------------------------------------------------------------
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.Client(timeout=180.0) as client:
+                    resp = client.post(url, json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    elapsed = time.perf_counter() - t0
 
-    def _generate_ollama(self, prompt: str, model: str, seed: int) -> str:
-        import ollama
+                    content = data.get("content", "")
+                    if not isinstance(content, str):
+                        content = str(content)
 
-        system = self._extract_system(prompt)
-        user = self._extract_user(prompt)
+                    if self.debug:
+                        tokens_in = data.get("tokens_evaluated", 0)
+                        tokens_out = data.get("tokens_predicted", 0)
+                        logger.debug(
+                            "LLM call: %.2fs, %d tokens in, %d tokens out, seed=%d",
+                            elapsed, tokens_in, tokens_out, seed_val,
+                        )
+                        logger.debug(
+                            "LLM response (first 300 chars): %s", content[:300]
+                        )
 
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": user})
+                    return content.strip()
 
-        client = ollama.Client(host=self.ollama_host)
-        response = client.chat(
-            model=model,
-            messages=messages,
-            options={
-                "temperature": self.temperature,
-                "seed": seed,
-            },
+            except httpx.ConnectError:
+                last_error = (
+                    f"Could not connect to llama-server at {self.server_url}. "
+                    "Make sure llama-server is running."
+                )
+                if attempt < self.max_retries:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                break
+
+            except Exception as e:
+                last_error = str(e)
+                if attempt < self.max_retries:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                break
+
+        raise RuntimeError(
+            f"llama-server error after {self.max_retries} retries: {last_error}"
         )
-        return response["message"]["content"].strip()
 
     # ------------------------------------------------------------------
-    # OpenRouter (remote API via httpx)
+    # OpenRouter (API)
     # ------------------------------------------------------------------
 
-    def _generate_openrouter(self, prompt: str, model: str, seed: int) -> str:
+    def _generate_openrouter(
+        self, prompt: str, model: str, seed_val: int
+    ) -> str:
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.openrouter_api_key}",
             "Content-Type": "application/json",
         }
-        payload: dict = {
+        payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": self.temperature,
-            "seed": seed,
+            "seed": seed_val,
             "top_p": 1.0,
-            "top_k": 1,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0,
-            "provider": {
-                "order": self.openrouter_provider,
-                "allow_fallbacks": "false"
-                }
+            "max_tokens": self.max_tokens,
         }
+        if self.json_schema is not None:
+            # Groq (único provedor sem quantização) não suporta "json_schema"
+            # strict no roteamento (404 "No endpoints found"). "json_object"
+            # garante JSON válido; o schema em si é imposto pelo prompt +
+            # validação no código (promptExec._validate / divergencia).
+            payload["response_format"] = {"type": "json_object"}
+        # Modelos com modo de raciocínio híbrido (ex.: Qwen3) precisam do
+        # thinking desligado, senão os tokens vão para o "reasoning" e o
+        # "content" sai vazio. Modelos não-reasoning (ex.: Llama 3.3) não
+        # suportam o campo e rejeitariam — por isso é condicional.
+        if any(h in model for h in _REASONING_MODEL_HINTS):
+            payload["reasoning"] = {"enabled": False}
         if self.openrouter_provider:
-            payload["provider"] = {"only": [self.openrouter_provider]}
+            payload["provider"] = {
+                "order": [self.openrouter_provider],
+                "allow_fallbacks": False,
+            }
 
-        max_retries = 3
-        for attempt in range(max_retries + 1):
+        t0 = time.perf_counter()
+
+        last_error = None
+        for attempt in range(self.max_retries + 1):
             try:
-                with httpx.Client(timeout=60.0) as client:
+                with httpx.Client(timeout=120.0) as client:
                     resp = client.post(url, headers=headers, json=payload)
                     if resp.status_code == 429:
-                        if attempt < max_retries:
-                            retry_after = int(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+                        if attempt < self.max_retries:
+                            retry_after = int(
+                                resp.headers.get("Retry-After", 2 ** (attempt + 1))
+                            )
                             time.sleep(retry_after)
                             continue
+                        resp.raise_for_status()
+                    if self.debug and resp.status_code >= 400:
+                        logger.debug("OpenRouter error body: %s", resp.text[:500])
                     resp.raise_for_status()
-                    return resp.json()["choices"][0]["message"]["content"].strip()
-            except Exception as e:
-                if attempt < max_retries and "429" in str(e):
+                    data = resp.json()
+                    elapsed = time.perf_counter() - t0
+
+                    content = data["choices"][0]["message"]["content"]
+                    if content is None:
+                        # Qwen3-32B pode consumir todo o teto com reasoning e
+                        # devolver content=null; trata como falha transiente
+                        # para cair no retry (com seed diferente).
+                        raise RuntimeError(
+                            "OpenRouter returned empty content (reasoning overflow)"
+                        )
+                    if not isinstance(content, str):
+                        content = str(content)
+
+                    if self.debug:
+                        usage = data.get("usage", {})
+                        tokens_in = usage.get("prompt_tokens", 0)
+                        tokens_out = usage.get("completion_tokens", 0)
+                        logger.debug(
+                            "LLM call: %.2fs, %d tokens in, %d tokens out, seed=%d",
+                            elapsed, tokens_in, tokens_out, seed_val,
+                        )
+                        logger.debug(
+                            "LLM response (first 300 chars): %s", content[:300]
+                        )
+
+                    return content.strip()
+
+            except httpx.ConnectError:
+                last_error = "Could not connect to OpenRouter API."
+                if attempt < self.max_retries:
                     time.sleep(2 ** (attempt + 1))
                     continue
-                return f"OpenRouter API error: {e}"
-        return "OpenRouter API error: max retries exceeded"
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_system(full_prompt: str) -> str:
-        """Extract the ``## System`` section from a copom markdown prompt."""
-        lines = full_prompt.splitlines()
-        in_system = False
-        parts: list[str] = []
-        for line in lines:
-            if line.strip().startswith("## System"):
-                in_system = True
-                continue
-            if line.strip().startswith("## User"):
                 break
-            if in_system:
-                parts.append(line)
-        return "\n".join(parts).strip()
 
-    @staticmethod
-    def _extract_user(full_prompt: str) -> str:
-        """Extract the ``## User`` section from a copom markdown prompt."""
-        lines = full_prompt.splitlines()
-        in_user = False
-        parts: list[str] = []
-        for line in lines:
-            if line.strip().startswith("## User"):
-                in_user = True
-                continue
-            if in_user:
-                parts.append(line)
-        return "\n".join(parts).strip()
+            except Exception as e:
+                last_error = str(e)
+                if attempt < self.max_retries:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                break
+
+        raise RuntimeError(
+            f"OpenRouter error after {self.max_retries} retries: {last_error}"
+        )

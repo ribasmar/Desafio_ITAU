@@ -19,10 +19,10 @@ import pytest
 # atributo homônimo do submódulo; import_module recupera o módulo de sys.modules.
 et = importlib.import_module("copom.features.extract_tone")
 
-_NUMERIC_FIELDS = ["stance", "stance_delta", "incerteza", "conviccao"]
+_NUMERIC_FIELDS = ["stance", "incerteza", "conviccao"]
 _SCHEMA_FIELDS = [
     "stance",
-    "stance_delta",
+    "stance_label",
     "forward_guidance",
     "incerteza",
     "conviccao",
@@ -31,16 +31,14 @@ _SCHEMA_FIELDS = [
 
 
 def make_run(
-    stance=0.3,
-    stance_delta=0.0,
+    stance_label="marginalmente_hawkish",
     incerteza=0.4,
     conviccao=0.6,
     forward_guidance="aperto",
     justificativa="trecho citado",
 ):
     return {
-        "stance": stance,
-        "stance_delta": stance_delta,
+        "stance_label": stance_label,
         "incerteza": incerteza,
         "conviccao": conviccao,
         "forward_guidance": forward_guidance,
@@ -153,10 +151,10 @@ def test_prompt_version_do_stem(mocks):
 # Critério 2 — roda n vezes e mostra estabilidade dos scores
 # ---------------------------------------------------------------------------
 
-def test_executa_n_runs_default_3(mocks):
+def test_executa_n_runs_default_1(mocks):
     _, _, mock_exec = mocks
     et.extract_tone(make_document(), prompt_path="prompts/copom_v1.md")
-    assert mock_exec.call_count == 3
+    assert mock_exec.call_count == 1
 
 
 def test_n_runs_customizado(mocks):
@@ -181,9 +179,10 @@ def test_scores_identicos_std_zero(mocks):
 
 def test_scores_divergentes_media_e_std(mocks):
     _, _, mock_exec = mocks
-    stances = [0.1, 0.2, 0.35]
-    mock_exec.side_effect = [make_run(stance=s) for s in stances]
+    labels = ["neutro_hawkish", "marginalmente_hawkish", "levemente_hawkish"]
+    mock_exec.side_effect = [make_run(stance_label=l) for l in labels]
     out = et.extract_tone(make_document(), n_runs=3, prompt_path="prompts/copom_v1.md")
+    stances = [0.125, 0.25, 0.375]
     esperado_mean = round(statistics.mean(stances), 4)
     esperado_std = round(statistics.stdev(stances), 4)
     assert out["stance"] == esperado_mean
@@ -194,7 +193,7 @@ def test_scores_divergentes_media_e_std(mocks):
 
 def test_n_runs_1_std_zero(mocks):
     _, _, mock_exec = mocks
-    mock_exec.return_value = make_run(stance=0.5)
+    mock_exec.return_value = make_run(stance_label="moderadamente_hawkish")
     out = et.extract_tone(make_document(), n_runs=1, prompt_path="prompts/copom_v1.md")
     assert out["stability"]["stance"]["std"] == 0.0
     assert out["stability"]["stance"]["values"] == [0.5]
@@ -202,9 +201,10 @@ def test_n_runs_1_std_zero(mocks):
 
 def test_valores_arredondados_4_casas(mocks):
     _, _, mock_exec = mocks
-    stances = [0.123456, 0.234567, 0.345678]
-    mock_exec.side_effect = [make_run(stance=s) for s in stances]
+    labels = ["neutro_hawkish", "marginalmente_hawkish", "levemente_hawkish"]
+    mock_exec.side_effect = [make_run(stance_label=l) for l in labels]
     out = et.extract_tone(make_document(), n_runs=3, prompt_path="prompts/copom_v1.md")
+    stances = [0.125, 0.25, 0.375]
     st = out["stability"]["stance"]
     assert st["mean"] == round(statistics.mean(stances), 4)
     assert st["std"] == round(statistics.stdev(stances), 4)
@@ -237,18 +237,23 @@ def test_seed_customizado_gravado(mocks):
     assert out["seed"] == 7
 
 
-def test_llmclient_recebe_provider_model_seed(mocks):
+def test_llmclient_recebe_model_seed(mocks):
     mock_client_cls, _, _ = mocks
     et.extract_tone(
         make_document(),
         model_id="qwen2.5:7b",
         seed=7,
-        provider="ollama",
         prompt_path="prompts/copom_v1.md",
     )
-    mock_client_cls.assert_called_once_with(
-        provider="ollama", model="qwen2.5:7b", seed=7
-    )
+    kwargs = mock_client_cls.call_args.kwargs
+    assert kwargs["model"] == "qwen2.5:7b"
+    assert kwargs["seed"] == 7
+    assert kwargs["debug"] is False
+    assert kwargs["provider"] is None
+    assert kwargs["openrouter_api_key"] is None
+    assert kwargs["openrouter_provider"] is None
+    assert kwargs["json_schema"] is not None
+    assert "stance_label" in kwargs["json_schema"]["properties"]
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +263,7 @@ def test_llmclient_recebe_provider_model_seed(mocks):
 def test_campo_numerico_ausente_levanta_keyerror(mocks):
     _, _, mock_exec = mocks
     run = make_run()
-    del run["stance"]
+    del run["conviccao"]
     mock_exec.return_value = run
     with pytest.raises(KeyError):
         et.extract_tone(make_document(), prompt_path="prompts/copom_v1.md")

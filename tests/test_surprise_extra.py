@@ -6,7 +6,7 @@
 import pandas as pd
 import pytest
 
-from copom.surprise.decision import (
+from copom.surprise.surpresa import (
     COPOM_CALENDAR,
     selic_efetiva,
     selic_esperada,

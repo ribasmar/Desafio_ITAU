@@ -55,7 +55,7 @@ def _build_record(entry: dict, text: str) -> dict:
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -73,7 +73,7 @@ def main() -> None:
         default=str(PROCESSED_DIR),
         help="Diretório de saída para o dataset processado (padrão: data/processed/)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     raw_path = Path(args.raw_path)
     processed_path = Path(args.processed_path)
@@ -100,6 +100,14 @@ def main() -> None:
         filepath = raw_path / entry["filename"]
         if not filepath.exists():
             logger.warning("Arquivo raw não encontrado: %s (pulando)", filepath)
+            continue
+        # PDFs não são HTML: parsear bytes de PDF como texto injetaria lixo
+        # no dataset (atas 200–225 existem só em PDF; o texto legítimo delas
+        # viria de OCR futuro — ver docs/bloqueio_DI_1Y.md).
+        if not filepath.name.endswith(".txt"):
+            logger.warning(
+                "Arquivo raw não é .txt (PDF?): %s (pulando)", filepath.name
+            )
             continue
         raw_text = filepath.read_text(encoding="utf-8")
         clean_text = parse_html(raw_text)

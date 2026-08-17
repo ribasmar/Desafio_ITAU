@@ -8,77 +8,82 @@ estabilidade.
 ## Uso
 
 ```bash
-PYTHONPATH=src python -m copom.models [OPCOES]
+python -m copom.models [OPCOES]
 ```
 
 ## Opcoes
 
 | Opcao | Padrao | Descricao |
 |---|---|---|
-| `--provider` | `openrouter` | Backend LLM: `local`, `ollama` ou `openrouter` |
-| `--model` | (resolvido via env/default) | Slug do modelo, tag Ollama ou caminho GGUF |
-| `--ata` | (todos) | Processar apenas a reuniao com este numero (ex.: `--ata 270`) |
-| `--limit` | (todos) | Processar apenas os primeiros N documentos (ignorado se `--ata` for definido) |
-| `--dataset` | `data/processed/copom_dataset.jsonl` | Caminho do dataset de entrada (JSONL) |
-| `--output` | `data/processed/tone_results.jsonl` | Caminho do arquivo de saida (JSONL) |
-| `--prompt` | `prompts/copom_v1.md` | Caminho do template de prompt (sobrescreve `PROMPT_PATH` do env) |
+| `--provider` | `local` | Backend LLM: `local` (llama.cpp) ou `openrouter` |
+| `--model` | (resolvido via env/default) | Slug OpenRouter ou caminho GGUF |
+| `--api-key` | (env `OPENROUTER_API_KEY`) | Chave de API OpenRouter |
+| `--openrouter-provider` | (env `OPENROUTER_PROVIDER`) | Forcar provider upstream (ex.: `Groq`) |
+| `--ata` | (todos) | Apenas uma reuniao (ex.: `--ata 270`) |
+| `--ata-range` | (todos) | Faixa de reunioes (ex.: `--ata-range 116:227`) |
+| `--limit` | (todos) | Apenas os N primeiros documentos |
+| `--dataset` | `data/processed/copom_dataset.jsonl` | Dataset de entrada (JSONL) |
+| `--output` | `data/processed/tone_results.jsonl` | Arquivo de saida (JSONL) |
+| `--prompt` | `prompts/copom_v3.md` | Template de prompt |
+| `--debug` | `False` | Logs detalhados em `data/processed/debug.log` e stderr |
+
+### Formato de `--ata-range`
+
+```bash
+--ata-range 116:227   # reunioes 116 a 227 inclusive
+--ata-range 116:      # da reuniao 116 ate o final
+--ata-range :227      # do inicio ate a reuniao 227
+```
 
 ## Resolucao do modelo
 
-O modelo e resolvido na seguinte ordem:
+Provider-aware. Ordem de prioridade:
 
 1. `--model` (argumento CLI)
-2. `LLM_MODEL_<PROVIDER>` (variavel de ambiente)
-3. `OPENROUTER_MODEL` (retrocompatibilidade, apenas para openrouter)
-4. `LLAMA_MODEL_PATH` (apenas para local)
-5. `_DEFAULT_MODELS[provider]` (fallback)
-
-### Defaults por provider
-
-| Provider | Modelo padrao |
-|---|---|
-| `openrouter` | `qwen/qwen-2.5-7b-instruct` |
-| `ollama` | `qwen2.5:7b` |
-| `local` | `Qwen2.5-7B-Instruct-Q8_0.gguf` |
+2. `LLM_MODEL_OPENROUTER` (provider=openrouter) ou `LLM_MODEL_LOCAL` (provider=local)
+3. `LLAMA_MODEL_PATH` (fallback legado)
+4. `_DEFAULT_MODEL` = `Qwen2.5-14B-Instruct-Q5_K_M.gguf`
 
 ## Exemplos
 
-### Extrair tom de uma ata especifica
+### Extrair uma faixa de reunioes
 
 ```bash
-PYTHONPATH=src python -m copom.models --provider openrouter --ata 270
+python -m copom.models --ata-range 116:227 --debug
 ```
 
 Saida esperada:
 
 ```
-[1/2] Ata 270 (2025-05-13) ... OK  (stance=0.8, std=0.0)
-[2/2] Comunicado 270 (2025-05-07) ... OK  (stance=0.5, std=0.0)
-
-Done. 2 OK, 0 errors — saved to data/processed/tone_results.jsonl
+[1/174] Ata 116 (2006-01-26) ... OK  (stance=0.25)
+[2/174] Ata 117 (2006-03-16) ... OK  (stance=0.5)
+...
+Done. 172 OK, 2 errors — saved to data/processed/tone_results.jsonl
 ```
 
-### Processar os 5 primeiros documentos com Ollama
+### OpenRouter com Qwen3-32B
 
 ```bash
-PYTHONPATH=src python -m copom.models --provider ollama --limit 5
+python -m copom.models --provider openrouter \
+    --model qwen/qwen-3-32b \
+    --ata-range 116:120 --debug
 ```
 
-### Usar modelo diferente via OpenRouter
+### Forcar provider Groq no OpenRouter
 
 ```bash
-PYTHONPATH=src python -m copom.models --provider openrouter \
-    --model meta-llama/llama-3.1-8b-instruct --ata 260
+python -m copom.models --provider openrouter \
+    --openrouter-provider Groq \
+    --ata 270
 ```
 
-### Dataset e saida customizados
+## Pos-processamento: pareamento (camada 2→4)
 
-```bash
-PYTHONPATH=src python -m copom.models --provider openrouter \
-    --dataset data/meu_dataset.jsonl \
-    --output data/minha_saida.jsonl \
-    --limit 10
-```
+O CLI de extracao nao pos-processa mais o `stance_delta` consecutivo
+(que misturava ata e comunicado na mesma sequencia e nao media nenhuma
+tese). O instrumento de tom e o pareado `stance(ata) − stance(comunicado)`
+da mesma reuniao, emitido por `python -m copom.features.pareamento`
+(ver `src/copom/features/pareamento.py` e `data/processed/pares_tone.jsonl`).
 
 ## Formato de saida
 
@@ -86,23 +91,22 @@ Cada linha do arquivo de saida e um objeto JSON (JSONL) com:
 
 ```json
 {
-  "stance": 0.8,
-  "stance_delta": 0.0,
+  "stance": 0.5,
+  "stance_label": "moderadamente_hawkish",
   "forward_guidance": "aperto",
-  "incerteza": 0.3,
-  "conviccao": 0.7,
+  "incerteza": 0.25,
+  "conviccao": 0.75,
   "justificativa": "...",
-  "model_id": "qwen/qwen-2.5-7b-instruct",
+  "model_id": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
   "seed": 42,
-  "prompt_version": "copom_v1",
-  "numero_reuniao": 270,
+  "prompt_version": "copom_v3",
+  "numero_reuniao": 117,
   "tipo": "ata",
-  "available_time": "2025-05-13",
+  "available_time": "2006-03-16",
   "stability": {
-    "stance": {"mean": 0.8, "std": 0.0, "values": [0.8, 0.8, 0.8]},
-    "stance_delta": {"mean": 0.0, "std": 0.0, "values": [0.0, 0.0, 0.0]},
-    "incerteza": {"mean": 0.3, "std": 0.0, "values": [0.3, 0.3, 0.3]},
-    "conviccao": {"mean": 0.7, "std": 0.0, "values": [0.7, 0.7, 0.7]}
+    "stance": {"mean": 0.5, "std": 0.0, "values": [0.5, 0.5, 0.5]},
+    "incerteza": {"mean": 0.25, "std": 0.0, "values": [0.25, 0.25, 0.25]},
+    "conviccao": {"mean": 0.75, "std": 0.0, "values": [0.75, 0.75, 0.75]}
   }
 }
 ```
@@ -111,16 +115,22 @@ Cada linha do arquivo de saida e um objeto JSON (JSONL) com:
 
 ```json
 {
-  "numero_reuniao": 266,
+  "numero_reuniao": 180,
   "tipo": "ata",
-  "available_time": "2024-11-14",
-  "error": "OpenRouter API error: ..."
+  "available_time": "2012-07-05",
+  "error": "llama-server error after 3 retries: timed out"
 }
 ```
 
-## Estabilidade
+## Estabilidade & Debug
 
 O CLI executa `n_runs=3` (tres chamadas identicas com mesma semente)
 para cada documento. Com `temperature=0.0`, as respostas devem ser
 identicas (`std=0.0`). Se `std > 0`, indica nao-determinismo no
 provider.
+
+Com `--debug`, o sistema loga em `data/processed/debug.log`:
+- Progresso por documento (meeting, tipo, data)
+- Latencia e tokens por chamada LLM
+- Primeiros 300 chars da resposta
+- Erros detalhados
