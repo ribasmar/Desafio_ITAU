@@ -51,7 +51,7 @@ extract_tone(
 | `model_id` | `str \| None` | `None` | Identificador do modelo (slug OpenRouter ou caminho GGUF) |
 | `seed` | `int` | `42` | Semente aleatoria para reprodutibilidade |
 | `n_runs` | `int` | `1` | Numero de chamadas identicas (CLI usa `n_runs=3`) |
-| `prompt_path` | `str \| Path \| None` | `None` | Template markdown. Padrao: `prompts/copom_v2.md` |
+| `prompt_path` | `str \| Path \| None` | `None` | Template markdown. Padrao: `prompts/copom_v3.md` |
 | `debug` | `bool` | `False` | Logs detalhados (latencia, tokens, resposta) |
 | `provider` | `str \| None` | `None` | Backend: `local` ou `openrouter`. Fallback: `LLM_PROVIDER` |
 | `openrouter_api_key` | `str \| None` | `None` | Chave API OpenRouter |
@@ -71,7 +71,7 @@ Dict JSON-serializavel com scores, metadados e estabilidade:
   "justificativa": "O Copom decidiu aumentar a taxa Selic...",
   "model_id": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
   "seed": 42,
-  "prompt_version": "copom_v2",
+  "prompt_version": "copom_v3",
   "numero_reuniao": 117,
   "tipo": "ata",
   "available_time": "2006-03-16",
@@ -106,7 +106,7 @@ rastreabilidade.
   "available_time": "2012-07-05",
   "model_id": "...",
   "seed": 42,
-  "prompt_version": "copom_v2"
+  "prompt_version": "copom_v3"
 }
 ```
 
@@ -141,7 +141,7 @@ reprodutibilidade.
 |---|---|---|
 | `model_id` | `LLMClient.model` | Modelo efetivamente resolvido |
 | `seed` | parametro | Semente utilizada |
-| `prompt_version` | `prompt_path.stem` | Nome do template (ex.: `copom_v2`) |
+| `prompt_version` | `prompt_path.stem` | Nome do template (ex.: `copom_v3`) |
 | `numero_reuniao` | `document["numero_reuniao"]` | Numero da ata/comunicado |
 | `tipo` | `document["tipo"]` | `"ata"` ou `"comunicado"` |
 | `available_time` | `document["available_time"]` | Data de publicacao |
@@ -183,9 +183,11 @@ result = extract_tone(
 python -m copom.models --ata-range 116:227 --debug
 ```
 
-O CLI chama `extract_tone()` com `n_runs=3` para cada documento,
-mapeia `stance_label` → `stance`, e computa `stance_delta` entre
-reunioes consecutivas no pos-processamento.
+O CLI chama `extract_tone()` com `n_runs=3` para cada documento e
+mapeia `stance_label` → `stance`. O instrumento de tom da camada 4 nao
+e o `stance` bruto (dominado pela decisao de juros), e sim o pareado
+`stance(ata) − stance(comunicado)` da mesma reuniao, emitido por
+`python -m copom.features.pareamento` (ver `src/copom/features/pareamento.py`).
 
 ## Dependencias
 

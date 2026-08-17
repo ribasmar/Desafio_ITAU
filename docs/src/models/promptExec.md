@@ -23,7 +23,7 @@ Preenche o template markdown com dados do documento.
 | Parametro | Tipo | Descricao |
 |---|---|---|
 | `document` | `dict` | Deve conter `tipo`, `available_time`, `text` |
-| `prompt_path` | `str \| Path \| None` | Caminho do template. Padrao: `prompts/copom_v2.md` |
+| `prompt_path` | `str \| Path \| None` | Caminho do template. Padrao: `prompts/copom_v3.md` |
 
 **Placeholders substituidos:**
 
@@ -76,7 +76,7 @@ usando 5 estrategias (em ordem):
 ### `stance_label` — classificação categorica
 
 O campo `stance_label` deve ser **exatamente um** dos 15 rótulos
-em português definidos no prompt `copom_v2.md`.
+em português definidos no prompt `copom_v3.md`.
 
 Normalizacao aplicada antes da validacao:
 - Remove acentos (`ç` → `c`, `ã` → `a`)

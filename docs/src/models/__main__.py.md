@@ -24,7 +24,7 @@ python -m copom.models [OPCOES]
 | `--limit` | (todos) | Apenas os N primeiros documentos |
 | `--dataset` | `data/processed/copom_dataset.jsonl` | Dataset de entrada (JSONL) |
 | `--output` | `data/processed/tone_results.jsonl` | Arquivo de saida (JSONL) |
-| `--prompt` | `prompts/copom_v2.md` | Template de prompt |
+| `--prompt` | `prompts/copom_v3.md` | Template de prompt |
 | `--debug` | `False` | Logs detalhados em `data/processed/debug.log` e stderr |
 
 ### Formato de `--ata-range`
@@ -77,14 +77,13 @@ python -m copom.models --provider openrouter \
     --ata 270
 ```
 
-## Pos-processamento: `stance_delta`
+## Pos-processamento: pareamento (camada 2→4)
 
-Apos a extracao de todos os documentos:
-
-1. Resultados sao ordenados por `numero_reuniao`
-2. `stance_delta[t] = stance[t] - stance[t-1]`
-3. Documentos com erro quebram a cadeia: `stance_delta = None`
-4. Primeiro documento da sequencia: `stance_delta = 0.0`
+O CLI de extracao nao pos-processa mais o `stance_delta` consecutivo
+(que misturava ata e comunicado na mesma sequencia e nao media nenhuma
+tese). O instrumento de tom e o pareado `stance(ata) − stance(comunicado)`
+da mesma reuniao, emitido por `python -m copom.features.pareamento`
+(ver `src/copom/features/pareamento.py` e `data/processed/pares_tone.jsonl`).
 
 ## Formato de saida
 
@@ -100,11 +99,10 @@ Cada linha do arquivo de saida e um objeto JSON (JSONL) com:
   "justificativa": "...",
   "model_id": "Qwen2.5-14B-Instruct-Q5_K_M.gguf",
   "seed": 42,
-  "prompt_version": "copom_v2",
+  "prompt_version": "copom_v3",
   "numero_reuniao": 117,
   "tipo": "ata",
   "available_time": "2006-03-16",
-  "stance_delta": 0.25,
   "stability": {
     "stance": {"mean": 0.5, "std": 0.0, "values": [0.5, 0.5, 0.5]},
     "incerteza": {"mean": 0.25, "std": 0.0, "values": [0.25, 0.25, 0.25]},
@@ -120,8 +118,7 @@ Cada linha do arquivo de saida e um objeto JSON (JSONL) com:
   "numero_reuniao": 180,
   "tipo": "ata",
   "available_time": "2012-07-05",
-  "error": "llama-server error after 3 retries: timed out",
-  "stance_delta": null
+  "error": "llama-server error after 3 retries: timed out"
 }
 ```
 

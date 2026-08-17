@@ -41,8 +41,8 @@ CopomLens. Fornece abstracao unificada para dois provedores
                                         │
                                         ▼
                         ┌─────────────────────────────────────┐
-                        │   Pos-processamento (__main__.py)  │
-                        │   stance_delta = stance[t] − [t-1]  │
+                        │  Pareamento (features/pareamento)  │
+                        │  stance_pareado = ata − comunicado │
                         └─────────────────────────────────────┘
 ```
 
@@ -71,7 +71,7 @@ arg --model  →  LLM_MODEL_OPENROUTER (openrouter)  →  LLM_MODEL_LOCAL (local
 | `LLAMA_SERVER_URL` | URL do llama-server |
 | `OPENROUTER_API_KEY` | Chave de API OpenRouter |
 | `OPENROUTER_PROVIDER` | Provider upstream forcado (ex.: `Groq`) |
-| `PROMPT_PATH` | Template de prompt (default: `copom_v2.md`) |
+| `PROMPT_PATH` | Template de prompt (default: `copom_v3.md`) |
 | `SEED` | Semente para reprodutibilidade |
 | `TEMPERATURE` | Temperatura de amostragem |
 
