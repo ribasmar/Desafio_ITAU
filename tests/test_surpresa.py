@@ -190,7 +190,16 @@ def test_painel_dados_reais_sem_nan_inesperado():
     focus_real = carregar_focus(DATA_DIR / "raw" / "focus_selic.csv")
     painel = montar_painel(dataset, selic_real, focus_real)
     assert len(painel) == dataset["numero_reuniao"].nunique()
-    ultima = painel["data_reuniao"].idxmax()
-    completas = painel.drop(index=ultima)
-    assert completas[["decisao", "mediana_focus", "surpresa"]].notna().all().all()
+    # NaN esperados (contrato do funil, não surpresa): mediana_focus só existe
+    # a partir da R1/2006 (o recurso do Olinda só rotula reuniões desde então);
+    # decisao é NaN apenas quando a série 432 não cobre o pós-reunião.
+    sem_focus = painel.loc[painel["mediana_focus"].isna(), "data_reuniao"]
+    assert sem_focus.max() < pd.Timestamp("2006-01-01")
+    assert painel.loc[painel["data_reuniao"] >= pd.Timestamp("2006-01-01"),
+                      "mediana_focus"].notna().all()
+    sem_decisao = painel.loc[painel["decisao"].isna(), "data_reuniao"]
+    assert (sem_decisao > selic_real["data"].max()).all() if len(sem_decisao) else True
+    assert (painel["surpresa"].isna() == (
+        painel["mediana_focus"].isna() | painel["decisao"].isna()
+    )).all()
     assert painel["decisao"].dropna().between(2.0, 20.0).all()

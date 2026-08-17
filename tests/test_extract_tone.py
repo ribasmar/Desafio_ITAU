@@ -245,11 +245,15 @@ def test_llmclient_recebe_model_seed(mocks):
         seed=7,
         prompt_path="prompts/copom_v1.md",
     )
-    mock_client_cls.assert_called_once_with(
-        model="qwen2.5:7b", seed=7, debug=False,
-        provider=None, openrouter_api_key=None,
-        openrouter_provider=None,
-    )
+    kwargs = mock_client_cls.call_args.kwargs
+    assert kwargs["model"] == "qwen2.5:7b"
+    assert kwargs["seed"] == 7
+    assert kwargs["debug"] is False
+    assert kwargs["provider"] is None
+    assert kwargs["openrouter_api_key"] is None
+    assert kwargs["openrouter_provider"] is None
+    assert kwargs["json_schema"] is not None
+    assert "stance_label" in kwargs["json_schema"]["properties"]
 
 
 # ---------------------------------------------------------------------------
