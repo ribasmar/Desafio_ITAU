@@ -101,6 +101,14 @@ def main(argv: list[str] | None = None) -> None:
         if not filepath.exists():
             logger.warning("Arquivo raw não encontrado: %s (pulando)", filepath)
             continue
+        # PDFs não são HTML: parsear bytes de PDF como texto injetaria lixo
+        # no dataset (atas 200–225 existem só em PDF; o texto legítimo delas
+        # viria de OCR futuro — ver docs/bloqueio_DI_1Y.md).
+        if not filepath.name.endswith(".txt"):
+            logger.warning(
+                "Arquivo raw não é .txt (PDF?): %s (pulando)", filepath.name
+            )
+            continue
         raw_text = filepath.read_text(encoding="utf-8")
         clean_text = parse_html(raw_text)
         record = _build_record(entry, clean_text)

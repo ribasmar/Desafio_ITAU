@@ -421,9 +421,15 @@ def montar_painel(
     Atenção: o rótulo é rankeado dentro das reuniões PRESENTES no dataset; use
     montar_painel_di1y (com a lista oficial de reuniões) para o alvo DI 1Y.
     """
+    # Uma linha por reunião: o dedup é pelo número da reunião, não por
+    # (número, data) — comunicados antigos ("Nota à Imprensa") podem trazer
+    # dataReferencia do dia da decisão (2º dia), divergente da data oficial
+    # registrada na ata (1º dia). A mínima data por reunião coincide com a
+    # data da ata e preserva o nivel_pre correto em decisao_apos_reuniao.
     reunioes = (
         dataset[["numero_reuniao", "data_reuniao"]]
-        .drop_duplicates()
+        .groupby("numero_reuniao", as_index=False)["data_reuniao"]
+        .min()
         .sort_values("data_reuniao")
         .reset_index(drop=True)
     )

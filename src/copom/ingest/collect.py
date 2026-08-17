@@ -227,7 +227,10 @@ def collect_minutes(count: int = DEFAULT_LAST, base_path: Path = RAW_DIR) -> dic
             publication_date = detail["dataPublicacao"]
             filename = f"ata_{num}_{meeting_date}.txt"
             saved = _save_raw_file(base, filename, detail["textoAta"])
-            if not saved:
+            # Arquivo ja existente no raw mas AUSENTE do manifesto (execucao
+            # anterior interrompida/manifesto regravado) nao pode sumir da
+            # coleta: registra a entrada mesmo sem reescrever o arquivo.
+            if not saved and not (base / filename).exists():
                 continue
             entry = _build_manifest_entry(
                 doc_type="ata",
@@ -285,7 +288,9 @@ def collect_statements(count: int = DEFAULT_LAST, base_path: Path = RAW_DIR) -> 
             meeting_date = detail["dataReferencia"]
             filename = f"comunicado_{num}_{meeting_date}.txt"
             saved = _save_raw_file(base, filename, detail["textoComunicado"])
-            if not saved:
+            # Mesma auto-cura do collect_minutes: arquivo existente sem entrada
+            # no manifesto volta a ser registrado (sem reescrever o raw).
+            if not saved and not (base / filename).exists():
                 continue
             entry = _build_manifest_entry(
                 doc_type="comunicado",
